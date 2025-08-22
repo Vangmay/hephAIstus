@@ -13,6 +13,7 @@
 
   - Decide what action the agent should take next based on the goal and current state
   - Analyze the goal and scratchpad, propose either a tool call or a final message. Start with a rule based planner an later add a LLM-based planner
+  - This is the brain of the agent, it decides how to systematically acheive a given task
 
 - Agent Core
 

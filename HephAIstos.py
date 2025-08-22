@@ -1,6 +1,10 @@
 from dataclasses import dataclass, field
 from typing import Callable, Dict
 import os 
+import requests
+import json 
+from urllib import request, error as urlerror
+from cerebras.cloud.sdk import Cerebras
 
 # ========== Defining the Tools Registry ========== 
  
@@ -109,6 +113,7 @@ def _tool_search_text_in_files(args: dict, context: ToolContext) -> ToolResult:
         return ToolResult(ok=True, output="\n".join(matching_files) if matching_files else "No matching files found.")
     except Exception as e:
         return ToolResult(ok=False, output=f"Error searching files: {e}")
+
 def _tool_run_python_script(args: dict, context: ToolContext) -> ToolResult:
     script_path = args.get("path")
     if not script_path:
@@ -162,3 +167,62 @@ for tool in tool_dict.items():
 
 tool_registry.list_tools()
 # This will print the list of registered tools with their descriptions.
+
+# ========== Agent Planner ==========
+
+def planner(goal: str, scratchpad: list[str], tools: ToolRegistry) -> dict:
+    """
+    Prompts an LLM to select a tool and arguments for the agent.
+    Returns a dict: {"tool": <tool_name>, "args": {...}, "thought": <reasoning>}
+    """
+    api_key = os.environ.get("OPENAI_API_KEY")
+    if not api_key:
+        return {"tool": None, "args": {}, "thought": "OPENAI_API_KEY not set."}
+
+    prompt = f"""
+        You are an autonomous coding assistant. You have these tools:
+        {tools.list_tools()}
+
+        Given the user's goal and the scratchpad (history), reply ONLY with a JSON object:
+        - tool: tool name to use
+        - args: arguments for the tool (as a JSON object)
+        - thought: short reasoning
+
+        User goal: {goal}
+        Scratchpad: {scratchpad}
+        """
+
+    client = Cerebras(
+        # This is the default and can be omitted
+        api_key=os.environ.get("cerebras_api_key"),
+    )
+    
+    stream = client.chat.completions.create(
+        messages=[
+            {
+                "role": "system",
+                "content": "Hello you an assistant"
+            }
+        ],
+        model="qwen-3-coder-480b",
+        stream=True,
+        max_completion_tokens=40000,
+        temperature=0.57,
+        top_p=0.8
+    )
+
+
+    response_text = ""
+    for chunk in stream:
+        if hasattr(chunk, "choices") and chunk.choices:
+            delta = chunk.choices[0].delta
+            if delta and "content" in delta:
+                response_text += delta["content"]
+    
+    try:
+        plan = json.loads(response_text)
+        return plan
+    except Exception as e:
+        return {"tool": None, "args": {}, "thought": f"Planner error: {e}\nRaw response: {response_text}"}
+
+# ========== Agent Core ==========
