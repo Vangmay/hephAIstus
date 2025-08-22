@@ -26,10 +26,10 @@ class Tool:
 @dataclass
 class ToolRegistry:
     def __init__(self):
-        self.tools: Dict[str, ToolFn] = {}
+        self.tools: Dict[str, Tool] = {}
 
     def register(self, tool: Tool) -> None:
-        self.tools[tool.name] = tool.fn
+        self.tools[tool.name] = tool
 
     def get_tool(self, name: str) -> ToolFn | None:
         if name in self.tools:
@@ -37,10 +37,10 @@ class ToolRegistry:
         else:
             raise KeyError(f"Unknown tool: {name}")
     def list_tools(self):
-        for tool in self.tools.values():
-            print(f"Tool: {tool.name}, Description: {tool.description}")
+        for idx, tool in enumerate(self.tools.values()):
+            print(f"Tool {idx}: {tool.name}, Description: {tool.description}")
 
-# ========== Defining the Tools Functions ========== 
+# ========== Defining the Tools ========== 
 
 def _tool_read_file(args: dict, context: ToolContext) -> ToolResult:
     file_path = args.get("path")
@@ -123,5 +123,42 @@ def _tool_run_python_script(args: dict, context: ToolContext) -> ToolResult:
         return ToolResult(ok=False, output=f"Error executing script: {e}")
     
 # ========== Registering Tools ==========
+tool_dict = {
+    "read_file": Tool(
+        name="read_file",
+        description="Reads the content of a file.",
+        fn=_tool_read_file
+    ),
+    "write_file": Tool(
+        name="write_file",
+        description="Writes content to a file.",
+        fn=_tool_write_file
+    ),
+    "append_file": Tool(
+        name="append_file",
+        description="Appends content to a file.",
+        fn=_tool_append_file
+    ),
+    "list_dir": Tool(
+        name="list_dir",
+        description="Lists files in a directory.",
+        fn=_tool_list_dir
+    ),
+    "search_text_in_files": Tool(
+        name="search_text_in_files",
+        description="Searches for text in files within a directory.",
+        fn=_tool_search_text_in_files
+    ),
+    "run_python_script": Tool(
+        name="run_python_script",
+        description="Executes a Python script from a file.",
+        fn=_tool_run_python_script
+    )
+}
+
 tool_registry = ToolRegistry()
-read_file = Tool(name = "read_file", description="Read the contexts of file", fn = _tool_read_file)
+for tool in tool_dict.items():
+    tool_registry.register(tool[1])
+
+tool_registry.list_tools()
+# This will print the list of registered tools with their descriptions.
