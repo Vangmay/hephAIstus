@@ -282,6 +282,8 @@ def planner(goal: str, scratchpad: list[str], tools: ToolRegistry, steps: int = 
         {{"tool": "write_file", "args": {{"path": "style.css", "content": "body {{ ... }}" }}, "thought": "Create CSS file"}}
         ]
         """
+    print("PLANNER PROMTP")
+    print(prompt)
 
     client = Cerebras(
         # This is the default and can be omitted
@@ -320,7 +322,7 @@ def planner(goal: str, scratchpad: list[str], tools: ToolRegistry, steps: int = 
         else: 
             return [{"tool": None, "args": {}, "thought": f"Planner did not return a list. Raw response: {response_text}"}]
     except Exception as e:
-        return {"tool": None, "args": {}, "thought": f"Planner error: {e}\nRaw response: {response_text}"}
+        return [{"tool": None, "args": {}, "thought": f"Planner error: {e}\nRaw response: {response_text}"}]
 
 
 def analyze_workspace(workspace_path: str, max_file_size: int = 4096) -> str:
@@ -329,8 +331,15 @@ def analyze_workspace(workspace_path: str, max_file_size: int = 4096) -> str:
     """
     summary = []
     for root, dirs, files in os.walk(workspace_path):
+        dirs[:] = [d for d in dirs if d not in [".git", ".github"]]
         rel_root = os.path.relpath(root, workspace_path)
+
+        if any(skip in rel_root.split(os.sep) for skip in [".git", ".github"]):
+            continue
+
         for file in files:
+            if file.startswith(".git") or file.startswith(".github"):
+                continue
             file_path = os.path.join(root, file)
             rel_path = os.path.join(rel_root, file) if rel_root != "." else file
             try:
@@ -357,20 +366,20 @@ def run_agent(goal: str, tool_registry: ToolRegistry, max_steps: int = 5, worksp
         tool_name = step.get("tool")
         args = step.get("args", {})
         reasoning = step.get("thought", "")
-        print(f"\nStep {idx+1}: {reasoning} using tool '{tool_name}' with args {args}")
+        # print(f"\nStep {idx+1}: {reasoning} using tool '{tool_name}' with args {args}")
         
         if not tool_name or tool_name not in tool_registry.tools:
-            print(f"Invalid tool name: {tool_name}. Stopping.")
+            # print(f"Invalid tool name: {tool_name}. Stopping.")
             break
 
         tool_fn = tool_registry.get_tool(tool_name).fn
         result = tool_fn(args, tool_registry.get_context())
-        print(f"Result: {result.output}")
+        # print(f"Result: {result.output}")
 
         scratchpad_entry = f"Thought: {reasoning}\nAction: {tool_name}\nAction Input: {json.dumps(args)}\nObservation: {result.output}\n"
         scratchpad.append(scratchpad_entry)
     
-    print("\nAgent Run complete")
+    # print("\nAgent Run complete")
     return "\n".join(scratchpad)
 
 # ans = run_agent("Writing a website using html and css and javascript", tool_registry, max_steps=5)
