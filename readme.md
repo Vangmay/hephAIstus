@@ -1,6 +1,6 @@
 # HephAIStos
 
-An extensible AI agent framework built in Python. This repository contains the core engine, tooling system, and examples to get started.
+An AI Coding agent build to be used within your CLI. This repository contains the core engine, tooling system, and examples to get started.
 
 ## Overview
 
