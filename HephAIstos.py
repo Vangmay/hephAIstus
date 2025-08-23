@@ -5,8 +5,16 @@ import requests
 import json 
 from urllib import request, error as urlerror
 from cerebras.cloud.sdk import Cerebras
+import random
 from dotenv import load_dotenv
 load_dotenv()
+
+# ========== Helper Functions / Guard Rails ==========
+def safe_path(path: str, workspace: str) -> str:
+    abs_path = os.path.abspath(os.path.join(workspace, path))
+    if not abs_path.startswith(workspace):
+        raise ValueError("Access to parent directories is not allowed.")
+    return abs_path
 
 # ========== Defining the Tools Registry ========== 
  
@@ -31,8 +39,9 @@ class Tool:
 
 @dataclass
 class ToolRegistry:
-    def __init__(self):
+    def __init__(self, context: ToolContext = ToolContext()):
         self.tools: Dict[str, Tool] = {}
+        self.context = context 
 
     def register(self, tool: Tool) -> None:
         self.tools[tool.name] = tool
@@ -48,13 +57,16 @@ class ToolRegistry:
             ans += f"Tool {idx}: {tool.name}, Description: {tool.description}\n"
         return ans.strip() if ans else "No tools registered."
 
+    def get_context(self) -> ToolContext:
+        return self.context
+
 # ========== Defining the Tools ========== 
 
 def _tool_read_file(args: dict, context: ToolContext) -> ToolResult:
     file_path = args.get("path")
     if not file_path:
         return ToolResult(ok=False, output="No file path provided.")
-    full_path = os.path.join(context.workspace_path, file_path)
+    full_path = safe_path(context.workspace_path, file_path)
     try:
         with open(full_path, 'r') as file:
             content = file.read()
@@ -68,7 +80,7 @@ def _tool_write_file(args: dict, context: ToolContext) -> ToolResult:
 
     if not file_path or content is None:
         return ToolResult(ok=False, output="File path or content not provided.")
-    full_path = os.path.join(context.workspace_path, file_path)
+    full_path = safe_path(context.workspace_path, file_path)
     try:
         with open(full_path, 'w') as file:
             file.write(content)
@@ -82,7 +94,7 @@ def _tool_append_file(args: dict, context: ToolContext) -> ToolResult:
 
     if not file_path or content is None:
         return ToolResult(ok=False, output="File path or content not provided.")
-    full_path = os.path.join(context.workspace_path, file_path)
+    full_path = safe_path(context.workspace_path, file_path)
     try:
         with open(full_path, 'a') as file:
             file.write(content)
@@ -92,7 +104,7 @@ def _tool_append_file(args: dict, context: ToolContext) -> ToolResult:
 
 def _tool_list_dir(args: dict, context: ToolContext) -> ToolResult:
     dir_path = args.get("path", context.workspace_path)
-    full_path = os.path.join(context.workspace_path, dir_path)
+    full_path = safe_path(context.workspace_path, dir_path)
     try:
         files = os.listdir(full_path)
         return ToolResult(ok=True, output="\n".join(files))
@@ -102,7 +114,7 @@ def _tool_list_dir(args: dict, context: ToolContext) -> ToolResult:
 def _tool_search_text_in_files(args: dict, context: ToolContext) -> ToolResult:
     search_text = args.get("text")
     dir_path = args.get("path", context.workspace_path)
-    full_path = os.path.join(context.workspace_path, dir_path)
+    full_path = safe_path(context.workspace_path, dir_path)
 
     if not search_text:
         return ToolResult(ok = False, output = "No search text provided.")
@@ -117,15 +129,22 @@ def _tool_search_text_in_files(args: dict, context: ToolContext) -> ToolResult:
         return ToolResult(ok=True, output="\n".join(matching_files) if matching_files else "No matching files found.")
     except Exception as e:
         return ToolResult(ok=False, output=f"Error searching files: {e}")
+    
+def _tool_delete_file(args: dict, context: ToolContext) -> ToolResult:
+    return ToolResult(ok=False, output="File deletion is not allowed by safety policy.")
 
 def _tool_run_python_script(args: dict, context: ToolContext) -> ToolResult:
     script_path = args.get("path")
     if not script_path:
         return ToolResult(ok = False, output = "No Script path provided.")
-    full_path = os.path.join(context.workspace_path, script_path)
     try:
+        full_path = safe_path(context.workspace_path, script_path)
         with open(full_path, 'r') as file:
             script_content = file.read()
+        
+        if "os.remove" in script_content or "shutil.rmtree" in script_content:
+            return ToolResult(ok=False, output="Script contains unsafe operations.")
+    
         exec(script_content, {'__name__': '__main__'})
         return ToolResult(ok=True, output=f"Script executed successfully: {full_path}")
     except Exception as e:
@@ -162,35 +181,45 @@ tool_dict = {
         name="run_python_script",
         description="Executes a Python script from a file.",
         fn=_tool_run_python_script
-    )
+    ),
+    "delete_file": Tool(
+        name="delete_file",
+        description="Deletes a file. (Disabled for safety)",
+        fn=_tool_delete_file
+    ),
 }
 
-tool_registry = ToolRegistry()
+tool_context = ToolContext()
+tool_registry = ToolRegistry(tool_context)
 for tool in tool_dict.items():
     tool_registry.register(tool[1])
 # This will print the list of registered tools with their descriptions.
 
 # ========== Agent Planner ==========
 
-def planner(goal: str, scratchpad: list[str], tools: ToolRegistry) -> dict:
+def planner(goal: str, scratchpad: list[str], tools: ToolRegistry, steps: int = 5) -> dict:
     """
     Prompts an LLM to select a tool and arguments for the agent.
     Returns a dict: {"tool": <tool_name>, "args": {...}, "thought": <reasoning>}
     """
-    api_key = os.environ.get("OPENAI_API_KEY")
-    if not api_key:
-        return {"tool": None, "args": {}, "thought": "OPENAI_API_KEY not set."}
     prompt = f"""
         You are an autonomous coding assistant. You have these tools:
         {tools.list_tools()}
 
-        Given the user's goal and the scratchpad (history), reply ONLY with a JSON object:
+        Given the user's goal and the scratchpad (history), reply ONLY with a JSON array of step objects.
+        Each step object must have:
         - tool: tool name to use
         - args: arguments for the tool (as a JSON object)
         - thought: short reasoning
 
         User goal: {goal}
         Scratchpad: {scratchpad}
+        Break the task into {steps} sequential steps. Return ONLY the JSON array, no markdown.
+        Example:
+        [
+        {{"tool": "write_file", "args": {{"path": "index.html", "content": "<html>...</html>"}}, "thought": "Create HTML file"}},
+        {{"tool": "write_file", "args": {{"path": "style.css", "content": "body {{ ... }}" }}, "thought": "Create CSS file"}}
+        ]
         """
 
     client = Cerebras(
@@ -217,12 +246,114 @@ def planner(goal: str, scratchpad: list[str], tools: ToolRegistry) -> dict:
         response_text += chunk.choices[0].delta.content or ""
     response_text += "\n"
 
+    response_text = response_text.strip()
+    if response_text.startswith("```"):
+        lines = response_text.split("\n")
+        response_text = "\n".join(lines[1:-1]) if len(lines) > 2 else response_text
+
     try:
         plan = json.loads(response_text)
-        return plan
+        if isinstance(plan, list):
+            return plan
+        else: 
+            return [{"tool": None, "args": {}, "thought": f"Planner did not return a list. Raw response: {response_text}"}]
     except Exception as e:
         return {"tool": None, "args": {}, "thought": f"Planner error: {e}\nRaw response: {response_text}"}
 
-ans = planner("Writing a website using html and css and javascript", [], tool_registry)
-print(ans)
+# ans = planner("Writing a website using html and css and javascript", [], tool_registry)
+# print(ans)
 # ========== Agent Core ==========
+
+def run_agent(goal: str, tool_registry: ToolRegistry, max_steps: int = 5) -> str:
+    scratchpad = []
+    plan_steps = planner(goal, scratchpad, tool_registry, max_steps)
+    
+    for idx, step in enumerate(plan_steps):
+        tool_name = step.get("tool")
+        args = step.get("args", {})
+        reasoning = step.get("thought", "")
+        print(f"\nStep {idx+1}: {reasoning} using tool '{tool_name}' with args {args}")
+        
+        if not tool_name or tool_name not in tool_registry.tools:
+            print(f"Invalid tool name: {tool_name}. Stopping.")
+            break
+
+        tool_fn = tool_registry.get_tool(tool_name).fn
+        result = tool_fn(args, tool_registry.get_context())
+        print(f"Result: {result.output}")
+
+        scratchpad_entry = f"Thought: {reasoning}\nAction: {tool_name}\nAction Input: {json.dumps(args)}\nObservation: {result.output}\n"
+        scratchpad.append(scratchpad_entry)
+    
+    print("\nAgent Run complete")
+    return "\n".join(scratchpad)
+
+# ans = run_agent("Writing a website using html and css and javascript", tool_registry, max_steps=5)
+# print(ans)
+
+def dummy_run_agent(goal):
+    return f"Dummy run for goal: {goal}"
+
+# ========== CLI Core ==========
+
+def get_cli_art():
+    cli_art_1 = """
+    ██╗  ██╗███████╗██████╗  █████╗ ██╗███████╗████████╗██╗   ██╗███████╗
+    ██║  ██║██╔════╝██╔══██╗██╔══██╗██║██╔════╝╚══██╔══╝██║   ██║██╔════╝
+    ███████║█████╗  ██████╔╝███████║██║███████╗   ██║   ██║   ██║███████╗
+    ██╔══██║██╔══╝  ██╔═══╝ ██╔══██║██║╚════██║   ██║   ██║   ██║╚════██║
+    ██║  ██║███████╗██║     ██║  ██║██║███████║   ██║   ╚██████╔╝███████║
+    ╚═╝  ╚═╝╚══════╝╚═╝     ╚═╝  ╚═╝╚═╝╚══════╝   ╚═╝    ╚═════╝ ╚══════╝
+                                                                        
+    """
+
+    cli_art_2 = """
+    __                             ______   ______              __                         
+    /  |                           /      \ /      |            /  |                        
+    $$ |____    ______    ______  /$$$$$$  |$$$$$$/   _______  _$$ |_    __    __   _______ 
+    $$      \  /      \  /      \ $$ |__$$ |  $$ |   /       |/ $$   |  /  |  /  | /       |
+    $$$$$$$  |/$$$$$$  |/$$$$$$  |$$    $$ |  $$ |  /$$$$$$$/ $$$$$$/   $$ |  $$ |/$$$$$$$/ 
+    $$ |  $$ |$$    $$ |$$ |  $$ |$$$$$$$$ |  $$ |  $$      \   $$ | __ $$ |  $$ |$$      \ 
+    $$ |  $$ |$$$$$$$$/ $$ |__$$ |$$ |  $$ | _$$ |_  $$$$$$  |  $$ |/  |$$ \__$$ | $$$$$$  |
+    $$ |  $$ |$$       |$$    $$/ $$ |  $$ |/ $$   |/     $$/   $$  $$/ $$    $$/ /     $$/ 
+    $$/   $$/  $$$$$$$/ $$$$$$$/  $$/   $$/ $$$$$$/ $$$$$$$/     $$$$/   $$$$$$/  $$$$$$$/  
+                        $$ |                                                                
+                        $$ |                                                                
+                        $$/                                                                     
+
+    """
+    return random.choice([cli_art_1, cli_art_2])
+    
+
+def color_text(text, color_code):
+    return f"\033[{color_code}m{text}\033[0m"
+
+def print_banner():
+    banner = get_cli_art()
+    print(color_text(banner, "36"))  # Cyan
+
+def cli():
+    print_banner()
+    print(color_text("Welcome to HephAIstos, your autonomous coding assistant!", "32"))  # Green
+    print(color_text("Type 'exit' to quit.", "33"))  # Yellow
+
+    while True:
+        goal = input(color_text("\n🔎 Enter your coding goal: ", "34"))  # Blue
+        if goal.lower() in ['exit', 'quit']:
+            print(color_text("👋 Exiting HephAIstos. Goodbye!", "31"))  # Red
+            break
+        print(color_text(f"\n⚡ Running agent for goal: {goal}\n", "35"))  # Magenta
+
+        # Run the real agent, not dummy
+        result = run_agent(goal, tool_registry, max_steps=5)
+        print(color_text("\n--- Agent Scratchpad ---", "36"))
+        print(color_text(result, "37"))  # White
+
+        # Ask if user wants to run another goal
+        again = input(color_text("\nWould you like to try another goal? (y/n): ", "33"))
+        if again.strip().lower() not in ("y", "yes"):
+            print(color_text("👋 Thanks for using HephAIstos!", "32"))
+            break
+
+if __name__ == "__main__":
+    cli()
