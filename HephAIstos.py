@@ -10,10 +10,10 @@ from dotenv import load_dotenv
 load_dotenv()
 
 # ========== Helper Functions / Guard Rails ==========
-def safe_path(path: str, workspace: str) -> str:
+def safe_path(workspace, path) -> str:
+    if ".." in path.replace("\\", "/").split("/"):
+        raise ValueError("Access to parent directories ('../') is not allowed.")
     abs_path = os.path.abspath(os.path.join(workspace, path))
-    if not abs_path.startswith(workspace):
-        raise ValueError("Access to parent directories is not allowed.")
     return abs_path
 
 # ========== Defining the Tools Registry ========== 
@@ -130,6 +130,43 @@ def _tool_search_text_in_files(args: dict, context: ToolContext) -> ToolResult:
     except Exception as e:
         return ToolResult(ok=False, output=f"Error searching files: {e}")
     
+def _tool_patch_file(args: dict, context: ToolContext) -> ToolResult:
+    """
+    Applies a list of changes (patches) to a file.
+    Args:
+        path: file to edit
+        changes: list of dicts, each with:
+            - action: "remove", "replace", or "insert"
+            - line: line number (0-based)
+            - content: new content (for replace/insert)
+    """
+    file_path = args.get("path")
+    changes = args.get("changes")
+    if not file_path or not isinstance(changes, list):
+        return ToolResult(ok=False, output="Missing 'path' or 'changes' (must be a list).")
+    try:
+        full_path = safe_path(context.workspace_path, file_path)
+        with open(full_path, "r") as f:
+            lines = f.readlines()
+        for change in sorted(changes, key=lambda c: c.get("line", 0), reverse=True):
+            action = change.get("action")
+            line = change.get("line")
+            content = change.get("content", "")
+            if action == "remove":
+                if 0 <= line < len(lines):
+                    lines.pop(line)
+            elif action == "replace":
+                if 0 <= line < len(lines):
+                    lines[line] = content + "\n"
+            elif action == "insert":
+                if 0 <= line <= len(lines):
+                    lines.insert(line, content + "\n")
+        with open(full_path, "w") as f:
+            f.writelines(lines)
+        return ToolResult(ok=True, output=f"Applied {len(changes)} changes to {full_path}")
+    except Exception as e:
+        return ToolResult(ok=False, output=f"Error patching file: {e}")
+    
 def _tool_delete_file(args: dict, context: ToolContext) -> ToolResult:
     return ToolResult(ok=False, output="File deletion is not allowed by safety policy.")
 
@@ -187,6 +224,11 @@ tool_dict = {
         description="Deletes a file. (Disabled for safety)",
         fn=_tool_delete_file
     ),
+    "patch_file": Tool(
+        name="patch_file",
+        description="Applies a list of line-based changes (diff patch) to a file. Usage: args={'path':..., 'changes':[{'action':'replace','line':2,'content':'new text'}, ...]}",
+        fn=_tool_patch_file
+    )
 }
 
 tool_context = ToolContext()
@@ -197,7 +239,7 @@ for tool in tool_dict.items():
 
 # ========== Agent Planner ==========
 
-def planner(goal: str, scratchpad: list[str], tools: ToolRegistry, steps: int = 5) -> dict:
+def planner(goal: str, scratchpad: list[str], tools: ToolRegistry, steps: int = 5, workspace_context: str = "Workspace is empty") -> dict:
     """
     Prompts an LLM to select a tool and arguments for the agent.
     Returns a dict: {"tool": <tool_name>, "args": {...}, "thought": <reasoning>}
@@ -205,6 +247,25 @@ def planner(goal: str, scratchpad: list[str], tools: ToolRegistry, steps: int = 
     prompt = f"""
         You are an autonomous coding assistant. You have these tools:
         {tools.list_tools()}
+
+        WORKSPACE CONTEXT:
+        {workspace_context}
+
+        TOOL USAGE EXAMPLES:
+            - patch_file: Applies a list of line-based changes (diff patch) to a file.
+            Example:
+            {{
+                "tool": "patch_file",
+                "args": {{
+                "path": "main.py",
+                "changes": [
+                    {{"action": "remove", "line": 2}},
+                    {{"action": "replace", "line": 5, "content": "new line content"}},
+                    {{"action": "insert", "line": 10, "content": "inserted line"}}
+                ]
+                }},
+                "thought": "Edit main.py by removing, replacing, and inserting lines."
+            }}
 
         Given the user's goal and the scratchpad (history), reply ONLY with a JSON array of step objects.
         Each step object must have:
@@ -234,11 +295,12 @@ def planner(goal: str, scratchpad: list[str], tools: ToolRegistry, steps: int = 
                 "content": prompt
             }
         ],
-        model="qwen-3-coder-480b",
+        model="gpt-oss-120b",
         stream=True,
-        max_completion_tokens=40000,
-        temperature=0.57,
-        top_p=0.8
+        max_completion_tokens=65536,
+        temperature=1,
+        top_p=1,
+        reasoning_effort="medium"
     )
 
     response_text = ""
@@ -260,13 +322,36 @@ def planner(goal: str, scratchpad: list[str], tools: ToolRegistry, steps: int = 
     except Exception as e:
         return {"tool": None, "args": {}, "thought": f"Planner error: {e}\nRaw response: {response_text}"}
 
+
+def analyze_workspace(workspace_path: str, max_file_size: int = 4096) -> str:
+    """
+    Scans the workspace and returns a summary of files and their contents (truncated).
+    """
+    summary = []
+    for root, dirs, files in os.walk(workspace_path):
+        rel_root = os.path.relpath(root, workspace_path)
+        for file in files:
+            file_path = os.path.join(root, file)
+            rel_path = os.path.join(rel_root, file) if rel_root != "." else file
+            try:
+                size = os.path.getsize(file_path)
+                if size > max_file_size:
+                    summary.append(f"{rel_path} (size: {size} bytes, skipped)")
+                else:
+                    with open(file_path, "r", encoding="utf-8", errors="ignore") as f:
+                        content = f.read(max_file_size)
+                    summary.append(f"{rel_path}:\n{content}\n---")
+            except Exception as e:
+                summary.append(f"{rel_path} (error reading: {e})")
+    return "\n".join(summary)
+
 # ans = planner("Writing a website using html and css and javascript", [], tool_registry)
 # print(ans)
 # ========== Agent Core ==========
 
-def run_agent(goal: str, tool_registry: ToolRegistry, max_steps: int = 5) -> str:
+def run_agent(goal: str, tool_registry: ToolRegistry, max_steps: int = 5, workspace_content: str = "Workspace is empty") -> str:
     scratchpad = []
-    plan_steps = planner(goal, scratchpad, tool_registry, max_steps)
+    plan_steps = planner(goal, scratchpad, tool_registry, max_steps, workspace_content)
     
     for idx, step in enumerate(plan_steps):
         tool_name = step.get("tool")
@@ -332,7 +417,7 @@ def print_banner():
     banner = get_cli_art()
     print(color_text(banner, "36"))  # Cyan
 
-def cli():
+def cli(workspace_summary: str):
     print_banner()
     print(color_text("Welcome to HephAIstos, your autonomous coding assistant!", "32"))  # Green
     print(color_text("Type 'exit' to quit.", "33"))  # Yellow
@@ -345,15 +430,11 @@ def cli():
         print(color_text(f"\n⚡ Running agent for goal: {goal}\n", "35"))  # Magenta
 
         # Run the real agent, not dummy
-        result = run_agent(goal, tool_registry, max_steps=5)
+        result = run_agent(goal, tool_registry, max_steps=5, workspace_content=workspace_summary)
         print(color_text("\n--- Agent Scratchpad ---", "36"))
         print(color_text(result, "37"))  # White
 
-        # Ask if user wants to run another goal
-        again = input(color_text("\nWould you like to try another goal? (y/n): ", "33"))
-        if again.strip().lower() not in ("y", "yes"):
-            print(color_text("👋 Thanks for using HephAIstos!", "32"))
-            break
 
 if __name__ == "__main__":
-    cli()
+    workspace_summary = analyze_workspace(os.getcwd())
+    cli(workspace_summary)
