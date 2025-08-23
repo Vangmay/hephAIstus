@@ -5,6 +5,8 @@ import requests
 import json 
 from urllib import request, error as urlerror
 from cerebras.cloud.sdk import Cerebras
+from dotenv import load_dotenv
+load_dotenv()
 
 # ========== Defining the Tools Registry ========== 
  
@@ -41,8 +43,10 @@ class ToolRegistry:
         else:
             raise KeyError(f"Unknown tool: {name}")
     def list_tools(self):
+        ans = ""
         for idx, tool in enumerate(self.tools.values()):
-            print(f"Tool {idx}: {tool.name}, Description: {tool.description}")
+            ans += f"Tool {idx}: {tool.name}, Description: {tool.description}\n"
+        return ans.strip() if ans else "No tools registered."
 
 # ========== Defining the Tools ========== 
 
@@ -164,8 +168,6 @@ tool_dict = {
 tool_registry = ToolRegistry()
 for tool in tool_dict.items():
     tool_registry.register(tool[1])
-
-tool_registry.list_tools()
 # This will print the list of registered tools with their descriptions.
 
 # ========== Agent Planner ==========
@@ -178,7 +180,6 @@ def planner(goal: str, scratchpad: list[str], tools: ToolRegistry) -> dict:
     api_key = os.environ.get("OPENAI_API_KEY")
     if not api_key:
         return {"tool": None, "args": {}, "thought": "OPENAI_API_KEY not set."}
-
     prompt = f"""
         You are an autonomous coding assistant. You have these tools:
         {tools.list_tools()}
@@ -201,7 +202,7 @@ def planner(goal: str, scratchpad: list[str], tools: ToolRegistry) -> dict:
         messages=[
             {
                 "role": "system",
-                "content": "Hello you an assistant"
+                "content": prompt
             }
         ],
         model="qwen-3-coder-480b",
@@ -211,18 +212,17 @@ def planner(goal: str, scratchpad: list[str], tools: ToolRegistry) -> dict:
         top_p=0.8
     )
 
-
     response_text = ""
     for chunk in stream:
-        if hasattr(chunk, "choices") and chunk.choices:
-            delta = chunk.choices[0].delta
-            if delta and "content" in delta:
-                response_text += delta["content"]
-    
+        response_text += chunk.choices[0].delta.content or ""
+    response_text += "\n"
+
     try:
         plan = json.loads(response_text)
         return plan
     except Exception as e:
         return {"tool": None, "args": {}, "thought": f"Planner error: {e}\nRaw response: {response_text}"}
 
+ans = planner("Writing a website using html and css and javascript", [], tool_registry)
+print(ans)
 # ========== Agent Core ==========
