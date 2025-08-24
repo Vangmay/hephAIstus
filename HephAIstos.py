@@ -1,5 +1,5 @@
 from dataclasses import dataclass, field
-from typing import Callable, Dict
+from typing import Callable, Dict, List, Optional
 import os 
 import requests
 import json 
@@ -239,7 +239,7 @@ for tool in tool_dict.items():
 
 # ========== Agent Planner ==========
 
-def planner(goal: str, scratchpad: list[str], tools: ToolRegistry, steps: int = 5, workspace_context: str = "Workspace is empty") -> dict:
+def planner(goal: str, scratchpad: list[str], tools: ToolRegistry, steps: int = 5, workspace_context: str = "Workspace is empty", agent_context: str = "") -> dict:
     """
     Prompts an LLM to select a tool and arguments for the agent.
     Returns a dict: {"tool": <tool_name>, "args": {...}, "thought": <reasoning>}
@@ -250,6 +250,14 @@ def planner(goal: str, scratchpad: list[str], tools: ToolRegistry, steps: int = 
 
         WORKSPACE CONTEXT:
         {workspace_context}
+
+        AGENT CONTEXT (recent operations):
+        {agent_context}
+
+        CONTEXT RESOLUTION RULES:
+        - If user says "it", "the file", "that file" → refer to LAST MODIFIED FILE above
+        - If user says "make it better/friendly/etc" → apply to LAST MODIFIED FILE
+        - Always be explicit about which file you're targeting in your thought process
 
         TOOL USAGE EXAMPLES:
             - patch_file: Applies a list of line-based changes (diff patch) to a file.
@@ -267,23 +275,24 @@ def planner(goal: str, scratchpad: list[str], tools: ToolRegistry, steps: int = 
                 "thought": "Edit main.py by removing, replacing, and inserting lines."
             }}
 
+        User goal: {goal}
+        
+        Here is the history of what has been done so far:
+        Scratchpad: {"".join(item for item in scratchpad)}
+
         Given the user's goal and the scratchpad (history), reply ONLY with a JSON array of step objects.
         Each step object must have:
         - tool: tool name to use
         - args: arguments for the tool (as a JSON object)
         - thought: short reasoning
-
-        User goal: {goal}
-        Scratchpad: {scratchpad}
-        Break the task into {steps} sequential steps. Return ONLY the JSON array, no markdown.
+        
+        Break the task into sequential steps. Return ONLY the JSON array, no markdown.
         Example:
         [
         {{"tool": "write_file", "args": {{"path": "index.html", "content": "<html>...</html>"}}, "thought": "Create HTML file"}},
         {{"tool": "write_file", "args": {{"path": "style.css", "content": "body {{ ... }}" }}, "thought": "Create CSS file"}}
         ]
         """
-    print("PLANNER PROMTP")
-    print(prompt)
 
     client = Cerebras(
         # This is the default and can be omitted
@@ -300,7 +309,7 @@ def planner(goal: str, scratchpad: list[str], tools: ToolRegistry, steps: int = 
         model="gpt-oss-120b",
         stream=True,
         max_completion_tokens=65536,
-        temperature=1,
+        temperature=0.8,
         top_p=1,
         reasoning_effort="medium"
     )
@@ -356,11 +365,49 @@ def analyze_workspace(workspace_path: str, max_file_size: int = 4096) -> str:
 
 # ans = planner("Writing a website using html and css and javascript", [], tool_registry)
 # print(ans)
+
+# ========== Agent State =========
+@dataclass
+class AgentState:
+    last_modified_file: Optional[str] = None
+    recently_created_files: List[str] = field(default_factory=list)
+    current_files: Dict[str, str] = field(default_factory=dict)
+    session_context: str = ""
+    
+    def update_from_tool_result(self, tool_name: str, args: dict, result: ToolResult):
+        """Update state based on tool execution"""
+        if tool_name in ["write_file", "patch_file", "append_file"] and result.ok:
+            file_path = args.get("path")
+            if file_path:
+                self.last_modified_file = file_path
+                self.current_files[file_path] = tool_name
+                
+        elif tool_name == "write_file" and result.ok:
+            file_path = args.get("path")
+            if file_path and file_path not in self.current_files:
+                self.recently_created_files.append(file_path)
+    
+    def get_context_string(self) -> str:
+        context_parts = []
+        
+        if self.last_modified_file:
+            context_parts.append(f"LAST MODIFIED FILE: {self.last_modified_file}")
+            
+        if self.recently_created_files:
+            context_parts.append(f"RECENTLY CREATED: {', '.join(self.recently_created_files[-3:])}")
+            
+        if self.current_files:
+            active_files = list(self.current_files.keys())[-3:]
+            context_parts.append(f"ACTIVE FILES: {', '.join(active_files)}")
+            
+        return "\n".join(context_parts) if context_parts else "No recent file operations"
+
 # ========== Agent Core ==========
 
-def run_agent(goal: str, tool_registry: ToolRegistry, max_steps: int = 5, workspace_content: str = "Workspace is empty") -> str:
+def run_agent(goal: str, tool_registry: ToolRegistry, max_steps: int = 5, workspace_content: str = "Workspace is empty", agent_state: AgentState = None) -> str:
     scratchpad = []
-    plan_steps = planner(goal, scratchpad, tool_registry, max_steps, workspace_content)
+    plan_steps = planner(goal, scratchpad, tool_registry, max_steps, workspace_content, agent_state.get_context_string())
+    agent_state = AgentState()
     
     for idx, step in enumerate(plan_steps):
         tool_name = step.get("tool")
@@ -375,6 +422,8 @@ def run_agent(goal: str, tool_registry: ToolRegistry, max_steps: int = 5, worksp
         tool_fn = tool_registry.get_tool(tool_name).fn
         result = tool_fn(args, tool_registry.get_context())
         # print(f"Result: {result.output}")
+
+        agent_state.update_from_tool_result(tool_name, args, result)
 
         scratchpad_entry = f"Thought: {reasoning}\nAction: {tool_name}\nAction Input: {json.dumps(args)}\nObservation: {result.output}\n"
         scratchpad.append(scratchpad_entry)
@@ -426,7 +475,7 @@ def print_banner():
     banner = get_cli_art()
     print(color_text(banner, "36"))  # Cyan
 
-def cli(workspace_summary: str):
+def cli(workspace_summary: str, session_agent_state: AgentState):
     print_banner()
     print(color_text("Welcome to HephAIstos, your autonomous coding assistant!", "32"))  # Green
     print(color_text("Type 'exit' to quit.", "33"))  # Yellow
@@ -439,11 +488,12 @@ def cli(workspace_summary: str):
         print(color_text(f"\n⚡ Running agent for goal: {goal}\n", "35"))  # Magenta
 
         # Run the real agent, not dummy
-        result = run_agent(goal, tool_registry, max_steps=5, workspace_content=workspace_summary)
+        result = run_agent(goal, tool_registry, max_steps=5, workspace_content=workspace_summary, agent_state=session_agent_state)
         print(color_text("\n--- Agent Scratchpad ---", "36"))
         print(color_text(result, "37"))  # White
 
 
 if __name__ == "__main__":
     workspace_summary = analyze_workspace(os.getcwd())
-    cli(workspace_summary)
+    session_agent_state = AgentState()
+    cli(workspace_summary, session_agent_state)

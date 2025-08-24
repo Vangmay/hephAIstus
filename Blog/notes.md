@@ -1,6 +1,8 @@
 - So to build an AI agent we have to build 3 systems in place
+  Welcome to my friendly blog! 😊
 
 - Tool Implementations
+- Let’s talk about the cool tools we’re building
 
   - Provide conrete actions that the agent can perform
   - Each tool should have a function that takes arguments and context, performs the action and returns the results
@@ -28,3 +30,5 @@
   - Support common operations like safe file access, clamping
   - For Example, we might want to prevent the agent from calling rm rf
   - We might want to prevent the agent from accessing files not in the current direction (Going to ../)
+
+Thanks for reading! Hope you enjoyed the friendly vibe. 🙌
