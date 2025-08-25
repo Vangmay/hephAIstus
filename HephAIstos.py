@@ -186,9 +186,20 @@ def _tool_run_python_script(args: dict, context: ToolContext) -> ToolResult:
         return ToolResult(ok=True, output=f"Script executed successfully: {full_path}")
     except Exception as e:
         return ToolResult(ok=False, output=f"Error executing script: {e}")
+
+def _tool_chat(args: dict, context: ToolContext) -> ToolResult:
+    message = args.get("message", "")
+    if not message:
+        return ToolResult(ok=False, output="No message provided.")
+    return ToolResult(ok=True, output=f"🤖 Suggestion: {message}")
     
 # ========== Registering Tools ==========
 tool_dict = {
+    "chat": Tool(
+        name="chat",
+        description="General chat tool for suggestions and advice.",
+        fn=_tool_chat
+    ),
     "read_file": Tool(
         name="read_file",
         description="Reads the content of a file.",
@@ -244,41 +255,32 @@ def planner(goal: str, scratchpad: list[str], tools: ToolRegistry, steps: int = 
     Prompts an LLM to select a tool and arguments for the agent.
     Returns a dict: {"tool": <tool_name>, "args": {...}, "thought": <reasoning>}
     """
-    prompt = f"""
+    def _clip(s, n=4000):
+        return s if len(s) <= n else s[:n] + "\n...[truncated]"
+    
+    system_prompt = f"""
         You are an autonomous coding assistant. You have these tools:
         {tools.list_tools()}
 
+        CONTEXT CONTRACT:
+        - If the user refers to “it/this/the file/that” → target AGENT CONTEXT's LAST MODIFIED FILE.
+        - Every file-affecting step MUST include args.path. If missing, auto-fill it from LAST MODIFIED FILE
+        and say so in "thought".
+        - The "thought" must explicitly name the target file (e.g., "Editing blog.md for friendliness").
+        Return ONLY a JSON array of steps (tool, args, thought). No markdown/code fences.
+        """
+    
+    print(f"AGENT CONTEXT: {agent_context}")
+    user_prompt = f"""
         WORKSPACE CONTEXT:
-        {workspace_context}
+        {_clip(workspace_context, )}
 
-        AGENT CONTEXT (recent operations):
-        {agent_context}
-
-        CONTEXT RESOLUTION RULES:
-        - If user says "it", "the file", "that file" → refer to LAST MODIFIED FILE above
-        - If user says "make it better/friendly/etc" → apply to LAST MODIFIED FILE
-        - Always be explicit about which file you're targeting in your thought process
-
-        TOOL USAGE EXAMPLES:
-            - patch_file: Applies a list of line-based changes (diff patch) to a file.
-            Example:
-            {{
-                "tool": "patch_file",
-                "args": {{
-                "path": "main.py",
-                "changes": [
-                    {{"action": "remove", "line": 2}},
-                    {{"action": "replace", "line": 5, "content": "new line content"}},
-                    {{"action": "insert", "line": 10, "content": "inserted line"}}
-                ]
-                }},
-                "thought": "Edit main.py by removing, replacing, and inserting lines."
-            }}
+        AGENT CONTEXT:
+        {_clip(agent_context)}
 
         User goal: {goal}
         
-        Here is the history of what has been done so far:
-        Scratchpad: {"".join(item for item in scratchpad)}
+        Scratchpad: {_clip("".join(scratchpad))}
 
         Given the user's goal and the scratchpad (history), reply ONLY with a JSON array of step objects.
         Each step object must have:
@@ -298,40 +300,53 @@ def planner(goal: str, scratchpad: list[str], tools: ToolRegistry, steps: int = 
         # This is the default and can be omitted
         api_key=os.environ.get("cerebras_api_key"),
     )
-    
-    stream = client.chat.completions.create(
-        messages=[
-            {
-                "role": "system",
-                "content": prompt
-            }
-        ],
+    params = dict(
         model="gpt-oss-120b",
-        stream=True,
-        max_completion_tokens=65536,
-        temperature=0.8,
-        top_p=1,
-        reasoning_effort="medium"
+        messages=[
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt},
+        ],
+        temperature=0.2,
+        top_p=0.95,
+        max_completion_tokens=2048,
     )
 
+    def _parse_json(txt: str) -> list:
+        txt = txt.strip()
+        if not txt:
+            return [{"tool": None, "args": {}, "thought": "Planner returned empty content."}]
+        if txt.startswith("```"):
+            lines = txt.splitlines()
+            txt = "\n".join(lines[1:-1]).strip()
+        end = txt.rfind("]")
+        if end != -1:
+            txt = txt[:end+1]
+        try:
+            obj = json.loads(txt)
+            return obj if isinstance(obj, list) else [{"tool": None, "args": {}, "thought": f"Non-list planner output: {txt[:200]}..."}]
+        except Exception as e:
+            return [{"tool": None, "args": {}, "thought": f"Planner JSON error: {e}\nRaw: {txt[:500]}"}]
+
+
     response_text = ""
-    for chunk in stream:
-        response_text += chunk.choices[0].delta.content or ""
-    response_text += "\n"
-
-    response_text = response_text.strip()
-    if response_text.startswith("```"):
-        lines = response_text.split("\n")
-        response_text = "\n".join(lines[1:-1]) if len(lines) > 2 else response_text
-
     try:
-        plan = json.loads(response_text)
-        if isinstance(plan, list):
-            return plan
-        else: 
-            return [{"tool": None, "args": {}, "thought": f"Planner did not return a list. Raw response: {response_text}"}]
-    except Exception as e:
-        return [{"tool": None, "args": {}, "thought": f"Planner error: {e}\nRaw response: {response_text}"}]
+        stream = client.chat.completions.create(stream=True, **params)
+        for chunk in stream:
+            delta = chunk.choices[0].delta
+            if delta and getattr(delta, "content", None):
+                response_text += delta.content
+    except Exception as _:
+        response_text = ""
+
+    if not response_text.strip():
+        try:
+            resp = client.chat.completions.create(stream=False, **params)
+            response_text = resp.choices[0].message.content or ""
+        except Exception as e:
+            return [{"tool": None, "args": {}, "thought": f"Planner transport error: {e}"}]
+    print("Response from planner: ", response_text)
+    return _parse_json(response_text)
+
 
 
 def analyze_workspace(workspace_path: str, max_file_size: int = 4096) -> str:
@@ -405,11 +420,14 @@ class AgentState:
 # ========== Agent Core ==========
 
 def run_agent(goal: str, tool_registry: ToolRegistry, max_steps: int = 5, workspace_content: str = "Workspace is empty", agent_state: AgentState = None) -> str:
+    if agent_state is None:  
+        agent_state = AgentState() 
+    
     scratchpad = []
     plan_steps = planner(goal, scratchpad, tool_registry, max_steps, workspace_content, agent_state.get_context_string())
-    agent_state = AgentState()
     
     for idx, step in enumerate(plan_steps):
+        print(step)
         tool_name = step.get("tool")
         args = step.get("args", {})
         reasoning = step.get("thought", "")
@@ -425,7 +443,7 @@ def run_agent(goal: str, tool_registry: ToolRegistry, max_steps: int = 5, worksp
 
         agent_state.update_from_tool_result(tool_name, args, result)
 
-        scratchpad_entry = f"Thought: {reasoning}\nAction: {tool_name}\nAction Input: {json.dumps(args)}\nObservation: {result.output}\n"
+        scratchpad_entry = f"Thought: {reasoning}\nAction: {tool_name}\nAction Input: {json.dumps(args)}\nObservation: {result.output}\n" 
         scratchpad.append(scratchpad_entry)
     
     # print("\nAgent Run complete")
@@ -433,9 +451,6 @@ def run_agent(goal: str, tool_registry: ToolRegistry, max_steps: int = 5, worksp
 
 # ans = run_agent("Writing a website using html and css and javascript", tool_registry, max_steps=5)
 # print(ans)
-
-def dummy_run_agent(goal):
-    return f"Dummy run for goal: {goal}"
 
 # ========== CLI Core ==========
 
@@ -490,7 +505,7 @@ def cli(workspace_summary: str, session_agent_state: AgentState):
         # Run the real agent, not dummy
         result = run_agent(goal, tool_registry, max_steps=5, workspace_content=workspace_summary, agent_state=session_agent_state)
         print(color_text("\n--- Agent Scratchpad ---", "36"))
-        print(color_text(result, "37"))  # White
+        print(color_text(result["Message"], "37"))  # White
 
 
 if __name__ == "__main__":
