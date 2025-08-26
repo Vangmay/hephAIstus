@@ -264,9 +264,12 @@ def planner(goal: str, scratchpad: list[str], tools: ToolRegistry, steps: int = 
 
         CONTEXT CONTRACT:
         - If the user refers to “it/this/the file/that” → target AGENT CONTEXT's LAST MODIFIED FILE.
+        - If the user uses pronouns about a NON-FILE concept (e.g., places, people, facts),
+        resolve them to AGENT CONTEXT's LAST TOPIC.  # NEW
+        - Prefer the 'chat' tool for general Q&A; do NOT mention repo files unless asked.  # NEW
         - Every file-affecting step MUST include args.path. If missing, auto-fill it from LAST MODIFIED FILE
         and say so in "thought".
-        - The "thought" must explicitly name the target file (e.g., "Editing blog.md for friendliness").
+        - The "thought" must explicitly name the target (file or topic).
         Return ONLY a JSON array of steps (tool, args, thought). No markdown/code fences.
         """
     
@@ -388,6 +391,10 @@ class AgentState:
     recently_created_files: List[str] = field(default_factory=list)
     current_files: Dict[str, str] = field(default_factory=dict)
     session_context: str = ""
+
+    last_topic: Optional[str] = None
+    last_answer: Optional[str] = None
+
     
     def update_from_tool_result(self, tool_name: str, args: dict, result: ToolResult):
         """Update state based on tool execution"""
@@ -414,6 +421,8 @@ class AgentState:
         if self.current_files:
             active_files = list(self.current_files.keys())[-3:]
             context_parts.append(f"ACTIVE FILES: {', '.join(active_files)}")
+        if self.last_topic:
+            context_parts.append(f"LAST TOPIC: {self.last_topic}")
             
         return "\n".join(context_parts) if context_parts else "No recent file operations"
 
@@ -442,6 +451,9 @@ def run_agent(goal: str, tool_registry: ToolRegistry, max_steps: int = 5, worksp
         # print(f"Result: {result.output}")
 
         agent_state.update_from_tool_result(tool_name, args, result)
+        if tool_name == "chat" and result.ok:
+            agent_state.last_topic = args.get("message", "")[:100]
+            agent_state.last_answer = result.output[:200]
 
         scratchpad_entry = f"Thought: {reasoning}\nAction: {tool_name}\nAction Input: {json.dumps(args)}\nObservation: {result.output}\n" 
         scratchpad.append(scratchpad_entry)
@@ -502,10 +514,9 @@ def cli(workspace_summary: str, session_agent_state: AgentState):
             break
         print(color_text(f"\n⚡ Running agent for goal: {goal}\n", "35"))  # Magenta
 
-        # Run the real agent, not dummy
         result = run_agent(goal, tool_registry, max_steps=5, workspace_content=workspace_summary, agent_state=session_agent_state)
         print(color_text("\n--- Agent Scratchpad ---", "36"))
-        print(color_text(result["Message"], "37"))  # White
+        print(color_text(result, "37"))  # White
 
 
 if __name__ == "__main__":
