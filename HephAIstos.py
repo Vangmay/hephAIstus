@@ -248,7 +248,115 @@ for tool in tool_dict.items():
     tool_registry.register(tool[1])
 # This will print the list of registered tools with their descriptions.
 
-# ========== Agent Planner ==========
+# ========== Context Matters ==========
+def analyze_workspace(workspace_path: str, max_file_size: int = 4096) -> str:
+    """
+    Scans the workspace and returns a summary of files and their contents (truncated).
+    """
+    summary = []
+    for root, dirs, files in os.walk(workspace_path):
+        dirs[:] = [d for d in dirs if d not in [".git", ".github"]]
+        rel_root = os.path.relpath(root, workspace_path)
+
+        if any(skip in rel_root.split(os.sep) for skip in [".git", ".github"]):
+            continue
+
+        for file in files:
+            if file.startswith(".git") or file.startswith(".github"):
+                continue
+            file_path = os.path.join(root, file)
+            rel_path = os.path.join(rel_root, file) if rel_root != "." else file
+            try:
+                size = os.path.getsize(file_path)
+                if size > max_file_size:
+                    summary.append(f"{rel_path} (size: {size} bytes, skipped)")
+                else:
+                    with open(file_path, "r", encoding="utf-8", errors="ignore") as f:
+                        content = f.read(max_file_size)
+                    summary.append(f"{rel_path}:\n{content}\n---")
+            except Exception as e:
+                summary.append(f"{rel_path} (error reading: {e})")
+    return "\n".join(summary)
+
+@dataclass
+class AgentState:
+    last_modified_file: Optional[str] = None
+    recently_created_files: List[str] = field(default_factory=list)
+    current_files: Dict[str, str] = field(default_factory=dict)
+    session_context: str = ""
+    workspace_context: str = analyze_workspace(path = "./")
+
+    last_topic: Optional[str] = None
+    last_answer: Optional[str] = None
+
+    
+    def update_from_tool_result(self, tool_name: str, args: dict, result: ToolResult):
+        """Update state based on tool execution"""
+        if tool_name in ["write_file", "patch_file", "append_file"] and result.ok:
+            file_path = args.get("path")
+            if file_path:
+                self.last_modified_file = file_path
+                self.current_files[file_path] = tool_name
+                
+        elif tool_name == "write_file" and result.ok:
+            file_path = args.get("path")
+            if file_path and file_path not in self.current_files:
+                self.recently_created_files.append(file_path)
+    
+    def get_context_string(self) -> str:
+        context_parts = []
+        
+        if self.last_modified_file:
+            context_parts.append(f"LAST MODIFIED FILE: {self.last_modified_file}")
+            
+        if self.recently_created_files:
+            context_parts.append(f"RECENTLY CREATED: {', '.join(self.recently_created_files[-3:])}")
+            
+        if self.current_files:
+            active_files = list(self.current_files.keys())[-3:]
+            context_parts.append(f"ACTIVE FILES: {', '.join(active_files)}")
+        if self.last_topic:
+            context_parts.append(f"LAST TOPIC: {self.last_topic}")
+            
+        return "\n".join(context_parts) if context_parts else "No recent file operations"
+
+
+# ========== Agent Core ==========
+
+class Agent():
+    def __init__(self, tool_registry: ToolRegistry, system_prompt: str = "", workspace_context: str = "Workspace is empty", agent_state: AgentState = AgentState()):
+        self.tool_registry = tool_registry
+        self.system_prompt = system_prompt
+        self.state = AgentState()
+        self.messages = []
+        self.workspace_context = workspace_context
+        self.agent_state = agent_state # Will be used the handle context of the agent
+        if self.system_prompt:
+            self.messages.append({"role": "system", "content": system_prompt})
+    
+    def __call__(self, prompt:str = "") -> str: 
+        self.messages.append({"role": "user", "content": prompt})
+        result = self.execute()
+        self.messages.append({"role": "assistant", "content": result})
+        return result
+    
+    def execute(self):
+        params = dict(
+            messages=self.messages,
+            model="qwen-3-32b",
+            max_completion_tokens=2048,
+            temperature=0.6,
+            top_p=0.95
+        )
+        client = Cerebras(api_key=os.environ.get("cerebras_api_key"))
+        completion = client.chat.completions.create(stream=True, **params)
+
+        response = ""
+        for chunk in completion:
+            response += chunk.choices[0].delta.content or ""
+        return response
+    
+
 
 def planner(goal: str, scratchpad: list[str], tools: ToolRegistry, steps: int = 5, workspace_context: str = "Workspace is empty", agent_context: str = "") -> dict:
     """
@@ -365,84 +473,6 @@ def planner(goal: str, scratchpad: list[str], tools: ToolRegistry, steps: int = 
     return _parse_json(response_text)
 
 
-
-def analyze_workspace(workspace_path: str, max_file_size: int = 4096) -> str:
-    """
-    Scans the workspace and returns a summary of files and their contents (truncated).
-    """
-    summary = []
-    for root, dirs, files in os.walk(workspace_path):
-        dirs[:] = [d for d in dirs if d not in [".git", ".github"]]
-        rel_root = os.path.relpath(root, workspace_path)
-
-        if any(skip in rel_root.split(os.sep) for skip in [".git", ".github"]):
-            continue
-
-        for file in files:
-            if file.startswith(".git") or file.startswith(".github"):
-                continue
-            file_path = os.path.join(root, file)
-            rel_path = os.path.join(rel_root, file) if rel_root != "." else file
-            try:
-                size = os.path.getsize(file_path)
-                if size > max_file_size:
-                    summary.append(f"{rel_path} (size: {size} bytes, skipped)")
-                else:
-                    with open(file_path, "r", encoding="utf-8", errors="ignore") as f:
-                        content = f.read(max_file_size)
-                    summary.append(f"{rel_path}:\n{content}\n---")
-            except Exception as e:
-                summary.append(f"{rel_path} (error reading: {e})")
-    return "\n".join(summary)
-
-# ans = planner("Writing a website using html and css and javascript", [], tool_registry)
-# print(ans)
-
-# ========== Agent State =========
-@dataclass
-class AgentState:
-    last_modified_file: Optional[str] = None
-    recently_created_files: List[str] = field(default_factory=list)
-    current_files: Dict[str, str] = field(default_factory=dict)
-    session_context: str = ""
-
-    last_topic: Optional[str] = None
-    last_answer: Optional[str] = None
-
-    
-    def update_from_tool_result(self, tool_name: str, args: dict, result: ToolResult):
-        """Update state based on tool execution"""
-        if tool_name in ["write_file", "patch_file", "append_file"] and result.ok:
-            file_path = args.get("path")
-            if file_path:
-                self.last_modified_file = file_path
-                self.current_files[file_path] = tool_name
-                
-        elif tool_name == "write_file" and result.ok:
-            file_path = args.get("path")
-            if file_path and file_path not in self.current_files:
-                self.recently_created_files.append(file_path)
-    
-    def get_context_string(self) -> str:
-        context_parts = []
-        
-        if self.last_modified_file:
-            context_parts.append(f"LAST MODIFIED FILE: {self.last_modified_file}")
-            
-        if self.recently_created_files:
-            context_parts.append(f"RECENTLY CREATED: {', '.join(self.recently_created_files[-3:])}")
-            
-        if self.current_files:
-            active_files = list(self.current_files.keys())[-3:]
-            context_parts.append(f"ACTIVE FILES: {', '.join(active_files)}")
-        if self.last_topic:
-            context_parts.append(f"LAST TOPIC: {self.last_topic}")
-            
-        return "\n".join(context_parts) if context_parts else "No recent file operations"
-
-# ========== Agent Core ==========
-
-
 def run_agent(goal: str, tool_registry: ToolRegistry, max_steps: int = 5, workspace_content: str = "Workspace is empty", agent_state: AgentState = None) -> str:
     if agent_state is None:  
         agent_state = AgentState() 
@@ -473,193 +503,7 @@ def run_agent(goal: str, tool_registry: ToolRegistry, max_steps: int = 5, worksp
         scratchpad_entry = f"Thought: {reasoning}\nAction: {tool_name}\nAction Input: {json.dumps(args)}\nObservation: {result.output}\n" 
         scratchpad.append(scratchpad_entry)
     
-    # print("\nAgent Run complete")
+    print("\nAgent Run complete")
     return "\n".join(scratchpad)
 
-# ========== CLI Core ==========
 
-# ======== UI Helpers ==========
-BOLD  = "\033[1m"
-DIM   = "\033[2m"
-RESET = "\033[0m"
-
-def hr(char="─", width=80):
-    return char * width
-
-def box(title: str, body: str, width: int = 80) -> str:
-    title = f" {title} "
-    top    = f"┌{hr('─', width-2)}┐"
-    midttl = f"│{title[:width-2].ljust(width-2)}│"
-    sep    = f"├{hr('─', width-2)}┤"
-    lines  = [f"│ {line[:width-3].ljust(width-3)}│" for line in body.splitlines() or [""]]
-    bot    = f"└{hr('─', width-2)}┘"
-    return "\n".join([top, midttl, sep, *lines, bot])
-
-def status(label: str, msg: str, color="36"):  # default cyan
-    return f"\033[{color}m[{label}]\033[0m {msg}"
-
-def pretty_steps(scratchpad: str, width: int = 80) -> str:
-    # Turn your "Thought/Action/Observation" text into numbered blocks
-    blocks = [b.strip() for b in scratchpad.split("\nObservation: ") if b.strip()]
-    rendered = []
-    for i, b in enumerate(blocks, 1):
-        # put Observation back for readability
-        if "Action Input:" in b and "Thought:" in b and "Action:" in b:
-            rendered.append(box(f"Step {i}", b.replace("Thought:", f"{BOLD}Thought:{RESET}")
-                                     .replace("Action:", f"{BOLD}Action:{RESET}")
-                                     .replace("Action Input:", f"{BOLD}Action Input:{RESET}")
-                                     .replace("Observation:", f"{BOLD}Observation:{RESET}"),
-                                width))
-        else:
-            rendered.append(box(f"Step {i}", b, width))
-    return "\n".join(rendered) if rendered else "(no steps)"
-
-
-def read_goal_multiline(prompt_text: str) -> str:
-    """Allow multi-line input by ending lines with a backslash."""
-    buff = []
-    while True:
-        line = input(prompt_text if not buff else "  ... ")
-        if line.strip().endswith("\\"):
-            buff.append(line.rstrip("\\"))
-            continue
-        buff.append(line)
-        return "\n".join(buff).strip()
-
-def handle_command(cmd: str, tool_registry: ToolRegistry, session_agent_state: "AgentState") -> Optional[str]:
-    """
-    Returns a string to print if handled; None if unknown command.
-    Supported:
-      :help           Show help
-      :tools          List tools
-      :state          Show agent context
-      :clear          Clear screen
-      :quit / :exit   Exit (signal by returning a sentinel string)
-    """
-    parts = cmd.split()
-    name = parts[0].lower()
-
-    if name in (":quit", ":exit"):
-        return "__EXIT__"
-    if name == ":help":
-        return box("Help", "\n".join([
-            ":help              Show this help",
-            ":tools             Show registered tools",
-            ":state             Show agent context",
-            ":clear             Clear the screen",
-            ":quit / :exit      Quit"
-        ]))
-    if name == ":tools":
-        return box("Tools", tool_registry.list_tools())
-    if name == ":state":
-        return box("Agent Context", session_agent_state.get_context_string())
-    if name == ":clear":
-        # portable clear
-        os.system("cls" if os.name == "nt" else "clear")
-        return status("OK", "Screen cleared.", "32")
-    if name == ":ls":
-        path = parts[1] if len(parts) > 1 else session_agent_state.last_modified_file or "."
-        tool = tool_registry.get_tool("list_dir").fn
-        res = tool({"path": path}, tool_registry.get_context())
-        color = "32" if res.ok else "31"
-        return box(f"ls {path}", res.output) if res.ok else status("ERR", res.output, color)
-    return None
-
-class Spinner:
-    FRAMES = ["⠋","⠙","⠹","⠸","⠼","⠴","⠦","⠧","⠇","⠏"]
-    def __init__(self, text="Thinking...", color="35"):
-        self.text = text
-        self.color = color
-        self._running = False
-    def __enter__(self):
-        import sys, threading, time
-        self._running = True
-        def run():
-            i = 0
-            while self._running:
-                sys.stdout.write(f"\r\033[{self.color}m{self.FRAMES[i%len(self.FRAMES)]} {self.text}\033[0m ")
-                sys.stdout.flush()
-                i += 1
-                time.sleep(0.08)
-        self._t = threading.Thread(target=run, daemon=True)
-        self._t.start()
-        return self
-    def __exit__(self, *exc):
-        import sys
-        self._running = False
-        self._t.join(timeout=0.1)
-        sys.stdout.write("\r" + " " * 80 + "\r")  # clear line
-        sys.stdout.flush()
-
-
-def get_cli_art():
-    cli_art_1 = """
-    ██╗  ██╗███████╗██████╗  █████╗ ██╗███████╗████████╗██╗   ██╗███████╗
-    ██║  ██║██╔════╝██╔══██╗██╔══██╗██║██╔════╝╚══██╔══╝██║   ██║██╔════╝
-    ███████║█████╗  ██████╔╝███████║██║███████╗   ██║   ██║   ██║███████╗
-    ██╔══██║██╔══╝  ██╔═══╝ ██╔══██║██║╚════██║   ██║   ██║   ██║╚════██║
-    ██║  ██║███████╗██║     ██║  ██║██║███████║   ██║   ╚██████╔╝███████║
-    ╚═╝  ╚═╝╚══════╝╚═╝     ╚═╝  ╚═╝╚═╝╚══════╝   ╚═╝    ╚═════╝ ╚══════╝
-                                                                        
-    """
-
-    cli_art_2 = """
-    __                             ______   ______              __                         
-    /  |                           /      \ /      |            /  |                        
-    $$ |____    ______    ______  /$$$$$$  |$$$$$$/   _______  _$$ |_    __    __   _______ 
-    $$      \  /      \  /      \ $$ |__$$ |  $$ |   /       |/ $$   |  /  |  /  | /       |
-    $$$$$$$  |/$$$$$$  |/$$$$$$  |$$    $$ |  $$ |  /$$$$$$$/ $$$$$$/   $$ |  $$ |/$$$$$$$/ 
-    $$ |  $$ |$$    $$ |$$ |  $$ |$$$$$$$$ |  $$ |  $$      \   $$ | __ $$ |  $$ |$$      \ 
-    $$ |  $$ |$$$$$$$$/ $$ |__$$ |$$ |  $$ | _$$ |_  $$$$$$  |  $$ |/  |$$ \__$$ | $$$$$$  |
-    $$ |  $$ |$$       |$$    $$/ $$ |  $$ |/ $$   |/     $$/   $$  $$/ $$    $$/ /     $$/ 
-    $$/   $$/  $$$$$$$/ $$$$$$$/  $$/   $$/ $$$$$$/ $$$$$$$/     $$$$/   $$$$$$/  $$$$$$$/  
-                        $$ |                                                                
-                        $$ |                                                                
-                        $$/                                                                     
-
-    """
-    return random.choice([cli_art_1, cli_art_2])
-    
-
-def color_text(text, color_code):
-    return f"\033[{color_code}m{text}\033[0m"
-
-def print_banner():
-    banner = get_cli_art()
-    print(color_text(banner, "36"))  # Cyan
-
-def cli(workspace_summary: str, session_agent_state: AgentState):
-    print_banner()
-    print(status("WELCOME", "HephAIstos, your autonomous coding assistant.", "32"))
-    print(status("HINT", "Type a goal, or use :help for commands.", "33"))
-
-    while True:
-        goal = read_goal_multiline(color_text("\n🔎 Enter your goal (use '\\' to continue): ", "34"))
-
-        if goal.startswith(":"):
-            out = handle_command(goal, tool_registry, session_agent_state)
-            if out == "__EXIT__":
-                print(status("BYE", "Exiting HephAIstos. Goodbye!", "31"))
-                break
-            print(out or status("ERR", "Unknown command. Try :help.", "31"))
-            continue
-
-        if not goal.strip():
-            print(status("WARN", "Empty goal. Try again.", "33"))
-            continue
-
-        print("\n" + box("Running", f"Goal: {goal}"))
-        with Spinner("Planning & executing...", "35"):
-            result = run_agent(goal, tool_registry, max_steps=5,
-                               workspace_content=workspace_summary,
-                               agent_state=session_agent_state)
-
-        print(color_text("\n--- Agent Scratchpad ---", "36"))
-        print(pretty_steps(result))
-
-
-
-if __name__ == "__main__":
-    workspace_summary = analyze_workspace(os.getcwd())
-    session_agent_state = AgentState()
-    cli(workspace_summary, session_agent_state)
