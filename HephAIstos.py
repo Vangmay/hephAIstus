@@ -442,6 +442,7 @@ class AgentState:
 
 # ========== Agent Core ==========
 
+
 def run_agent(goal: str, tool_registry: ToolRegistry, max_steps: int = 5, workspace_content: str = "Workspace is empty", agent_state: AgentState = None) -> str:
     if agent_state is None:  
         agent_state = AgentState() 
