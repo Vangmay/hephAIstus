@@ -50,6 +50,7 @@ class ToolRegistry:
             return self.tools[name]
         else:
             raise KeyError(f"Unknown tool: {name}")
+    
     def list_tools(self):
         ans = ""
         for idx, tool in enumerate(self.tools.values()):
@@ -258,8 +259,11 @@ def planner(goal: str, scratchpad: list[str], tools: ToolRegistry, steps: int = 
         return s if len(s) <= n else s[:n] + "\n...[truncated]"
     
     system_prompt = f"""
-        You are an autonomous coding assistant. You have these tools:
-        {tools.list_tools()}
+        You are a ReAct (Reasoning and Acting) agent meant to be a coding assistant.
+
+        Your goal is to reason about the query and decide on the best course of action to answer it accurately.
+        
+        Available tools: {tools.list_tools()}
 
         CONTEXT CONTRACT:
         - If the user refers to “it/this/the file/that” → target AGENT CONTEXT's LAST MODIFIED FILE.
@@ -270,65 +274,75 @@ def planner(goal: str, scratchpad: list[str], tools: ToolRegistry, steps: int = 
         and say so in "thought".
         - The "thought" must explicitly name the target (file or topic).
         Return ONLY a JSON array of steps (tool, args, thought). No markdown/code fences.
-        """
+    """
     
-    print(f"AGENT CONTEXT: {agent_context}")
     user_prompt = f"""
+        You are a ReAct (Reasoning and Acting) coding agent tasked with answering the following query:
+        User query: {goal}
+
         WORKSPACE CONTEXT:
         {_clip(workspace_context, )}
 
         AGENT CONTEXT:
         {_clip(agent_context)}
 
-        User goal: {goal}
-        
-        Scratchpad: {_clip("".join(scratchpad))}
+        Previous reasoning steps and observations: {_clip("".join(scratchpad))}
 
-        Given the user's goal and the scratchpad (history), reply ONLY with a JSON array of step objects.
-        Each step object must have:
-        - tool: tool name to use
-        - args: arguments for the tool (as a JSON object)
-        - thought: short reasoning
+        Instructions:
+            1. Analyze the query, previous reasoning steps, observations, and the provided Agent and Workspace contexts.
+            2. Decide on the next action: use a tool or provide a final answer.
+            3. Respond in the following JSON format:
         
         Break the task into sequential steps. Return ONLY the JSON array, no markdown.
         Example:
-        [
-        {{"tool": "write_file", "args": {{"path": "index.html", "content": "<html>...</html>"}}, "thought": "Create HTML file"}},
-        {{"tool": "write_file", "args": {{"path": "style.css", "content": "body {{ ... }}" }}, "thought": "Create CSS file"}}
-        ]
+            {{
+                "thought": "Your detailed reasoning about what to do next",
+                "action": {{
+                    "tool": "tool_name",
+                    "args": {{"path": "file path if applicable", "content": "file content if applicable",}},
+                    "reason": "Short reason for using this tool."
+                }}
+            }}
+
+        Remember:
+            - Be thorough in your reasoning.
+            - Use tools when you need more information.
+            - Always base your reasoning on the actual observations from tool use.
+            - If a tool returns no results or fails, acknowledge this and consider using a different tool or approach.
+            - Provide a final answer only when you're confident you have sufficient information.
+            - If you cannot find the necessary information after using available tools, admit that you don't have enough information to answer the query confidently.
         """
 
     client = Cerebras(
         # This is the default and can be omitted
         api_key=os.environ.get("cerebras_api_key"),
     )
+
     params = dict(
-        model="gpt-oss-120b",
         messages=[
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": user_prompt},
         ],
-        temperature=0.2,
-        top_p=0.95,
+        model="qwen-3-32b",
         max_completion_tokens=2048,
+        temperature=0.6,
+        top_p=0.95
     )
 
     def _parse_json(txt: str) -> list:
         txt = txt.strip()
         if not txt:
             return [{"tool": None, "args": {}, "thought": "Planner returned empty content."}]
-        if txt.startswith("```"):
-            lines = txt.splitlines()
-            txt = "\n".join(lines[1:-1]).strip()
+        # Find first '[' and last ']'
+        start = txt.find("[")
         end = txt.rfind("]")
-        if end != -1:
-            txt = txt[:end+1]
+        if start != -1 and end != -1 and end > start:
+            txt = txt[start:end+1]
         try:
             obj = json.loads(txt)
             return obj if isinstance(obj, list) else [{"tool": None, "args": {}, "thought": f"Non-list planner output: {txt[:200]}..."}]
         except Exception as e:
             return [{"tool": None, "args": {}, "thought": f"Planner JSON error: {e}\nRaw: {txt[:500]}"}]
-
 
     response_text = ""
     try:
@@ -346,6 +360,7 @@ def planner(goal: str, scratchpad: list[str], tools: ToolRegistry, steps: int = 
             response_text = resp.choices[0].message.content or ""
         except Exception as e:
             return [{"tool": None, "args": {}, "thought": f"Planner transport error: {e}"}]
+        
     print("Response from planner: ", response_text)
     return _parse_json(response_text)
 
@@ -436,13 +451,13 @@ def run_agent(goal: str, tool_registry: ToolRegistry, max_steps: int = 5, worksp
     
     for idx, step in enumerate(plan_steps):
         print(step)
-        tool_name = step.get("tool")
-        args = step.get("args", {})
-        reasoning = step.get("thought", "")
-        # print(f"\nStep {idx+1}: {reasoning} using tool '{tool_name}' with args {args}")
+        action = step.get("action", {})
+        tool_name = action.get("tool")
+        args = action.get("args", {})
+        reasoning = action.get("reason", "")
         
         if not tool_name or tool_name not in tool_registry.tools:
-            # print(f"Invalid tool name: {tool_name}. Stopping.")
+            print(f"Invalid tool name: {tool_name}. Stopping.")
             break
 
         tool_fn = tool_registry.get_tool(tool_name).fn
@@ -459,9 +474,6 @@ def run_agent(goal: str, tool_registry: ToolRegistry, max_steps: int = 5, worksp
     
     # print("\nAgent Run complete")
     return "\n".join(scratchpad)
-
-# ans = run_agent("Writing a website using html and css and javascript", tool_registry, max_steps=5)
-# print(ans)
 
 # ========== CLI Core ==========
 
