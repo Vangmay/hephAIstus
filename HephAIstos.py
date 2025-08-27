@@ -28,7 +28,6 @@ class ToolResult:
     output: str
 
 ToolFn = Callable[[dict, ToolContext], ToolResult]
-# A Type that defines how a tool is used
 
 @dataclass
 class Tool:
@@ -265,8 +264,8 @@ def planner(goal: str, scratchpad: list[str], tools: ToolRegistry, steps: int = 
         CONTEXT CONTRACT:
         - If the user refers to “it/this/the file/that” → target AGENT CONTEXT's LAST MODIFIED FILE.
         - If the user uses pronouns about a NON-FILE concept (e.g., places, people, facts),
-        resolve them to AGENT CONTEXT's LAST TOPIC.  # NEW
-        - Prefer the 'chat' tool for general Q&A; do NOT mention repo files unless asked.  # NEW
+        resolve them to AGENT CONTEXT's LAST TOPIC.
+        - Prefer the 'chat' tool for general Q&A; do NOT mention repo files unless asked. 
         - Every file-affecting step MUST include args.path. If missing, auto-fill it from LAST MODIFIED FILE
         and say so in "thought".
         - The "thought" must explicitly name the target (file or topic).
