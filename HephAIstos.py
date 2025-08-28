@@ -265,10 +265,14 @@ tool_dict = {
     )
 }
 
-tool_context = ToolContext()
-tool_registry = ToolRegistry(tool_context)
-for tool in tool_dict.items():
-    tool_registry.register(tool[1])
+def build_tool_registry(tool_dict) -> ToolRegistry:
+    tool_context = ToolContext()
+    tool_registry = ToolRegistry(tool_context)
+    for tool in tool_dict.items():
+        tool_registry.register(tool[1])
+    return tool_registry 
+
+tool_registry = build_tool_registry(tool_dict)
 # This will print the list of registered tools with their descriptions.
 
 # ========== Context Matters ==========
@@ -451,17 +455,6 @@ class Agent():
             response += chunk.choices[0].delta.content or ""
         return response
 
-
-
-state = AgentState()
-jarvis = Agent(client, tool_registry, agent_state=state)
-system_prompt = jarvis.system_prompt
-# Result = jarvis("Read the content of HephAIstos.py and write its purpose in detail.")
-# print(Result)
-# observation = _tool_read_file({"path": "HephAIstos.py"}, tool_registry.get_context())
-# Result = jarvis(f"Observation: {observation.output}")
-# print(Result)
-
 def react_loop(goal, agent: Agent, tool_registry: ToolRegistry, agent_state: AgentState, max_steps: int = 10):
     observation = None
     for step in range(max_steps):
@@ -475,7 +468,7 @@ def react_loop(goal, agent: Agent, tool_registry: ToolRegistry, agent_state: Age
             tool = tool_registry.get_tool(tool_name).fn
             args = response["action"].get("args", {}) 
             reason = response["action"].get("reason", "") 
-            print(f"Using the tool {tool_context} with args {args} because {reason}")
+            print(f"Using the tool {tool_name} with args {args} because {reason}")
             tool_result = tool(args, tool_registry.get_context())
             # print(f"Tool result: {tool_result.output}")
             agent_state.update_from_tool_result(tool_name, args, tool_result)
@@ -485,4 +478,9 @@ def react_loop(goal, agent: Agent, tool_registry: ToolRegistry, agent_state: Age
             print("Final answer reached.")
             return response["final"]["message"] 
 
-react_loop("Summarize the contents of HephAIstos.py in detail. Put them in a new file called blogg.md inside Blog directory", jarvis, tool_registry, state, max_steps=5)
+
+# state = AgentState()
+# jarvis = Agent(client, tool_registry, agent_state=state)
+# react_loop("Summarize the contents of HephAIstos.py in detail. Put them in a new file called blogg.md inside Blog directory", jarvis, tool_registry, state, max_steps=5)
+
+# ========== CLI User Interface ==========
