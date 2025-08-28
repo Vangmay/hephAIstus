@@ -475,7 +475,8 @@ def react_loop(goal, agent: Agent, tool_registry: ToolRegistry, agent_state: Age
 
         elif "final" in response:
             print("Final answer reached.")
-            return response["final"]["message"] 
+            return response["final"]["message"]
+    return agent.messages[-1]["content"] 
 
 
 # state = AgentState()
@@ -642,7 +643,7 @@ def cli():
 
         print("\n" + box("Running", f"Goal: {goal}"))
         with Spinner("Planning & executing...", "35"):
-            result = react_loop(goal, agent, tool_registry, session_agent_state, max_steps=5)
+            result = react_loop(goal, agent, tool_registry, session_agent_state, max_steps=10)
 
         print(color_text("\n--- Agent Scratchpad ---", "36"))
         print(pretty_steps(result))
