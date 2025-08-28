@@ -1,11 +1,8 @@
 from dataclasses import dataclass, field
 from typing import Callable, Dict, List, Optional
 import os 
-import requests
 import json 
-from urllib import request, error as urlerror
 from groq import Groq
-import random
 from dotenv import load_dotenv
 load_dotenv()
 
