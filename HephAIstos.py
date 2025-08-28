@@ -4,7 +4,7 @@ import os
 import requests
 import json 
 from urllib import request, error as urlerror
-from cerebras.cloud.sdk import Cerebras
+from groq import Groq
 import random
 from dotenv import load_dotenv
 load_dotenv()
@@ -16,6 +16,29 @@ def safe_path(workspace, path) -> str:
     abs_path = os.path.abspath(os.path.join(workspace, path))
     return abs_path
 
+def _clip(s, n=4000):
+    return s if len(s) <= n else s[:n] + "\n...[truncated]"
+
+def _parse_json(txt: str) -> dict:
+    txt = txt.strip()
+    # Remove code fences if present
+    if txt.startswith("```") and txt.endswith("```"):
+        txt = txt.strip("`").strip()
+    # Find first '{' and last '}'
+    start = txt.find("{")
+    end = txt.rfind("}")
+    if start != -1 and end != -1 and end > start:
+        txt = txt[start:end+1]
+    try:
+        obj = json.loads(txt)
+        # Validate shape
+        if "thought" in obj and ("action" in obj or "final" in obj):
+            return obj
+        else:
+            return {"thought": "Parse error: missing required keys.", "action": None, "final": None}
+    except Exception as e:
+        return {"thought": f"JSON parse error: {e}\nRaw: {txt[:500]}", "action": None, "final": None}
+    
 # ========== Defining the Tools Registry ========== 
  
 @dataclass
@@ -242,130 +265,17 @@ tool_dict = {
     )
 }
 
-tool_context = ToolContext()
-tool_registry = ToolRegistry(tool_context)
-for tool in tool_dict.items():
-    tool_registry.register(tool[1])
+def build_tool_registry(tool_dict) -> ToolRegistry:
+    tool_context = ToolContext()
+    tool_registry = ToolRegistry(tool_context)
+    for tool in tool_dict.items():
+        tool_registry.register(tool[1])
+    return tool_registry 
+
+tool_registry = build_tool_registry(tool_dict)
 # This will print the list of registered tools with their descriptions.
 
-# ========== Agent Planner ==========
-
-def planner(goal: str, scratchpad: list[str], tools: ToolRegistry, steps: int = 5, workspace_context: str = "Workspace is empty", agent_context: str = "") -> dict:
-    """
-    Prompts an LLM to select a tool and arguments for the agent.
-    Returns a dict: {"tool": <tool_name>, "args": {...}, "thought": <reasoning>}
-    """
-    def _clip(s, n=4000):
-        return s if len(s) <= n else s[:n] + "\n...[truncated]"
-    
-    system_prompt = f"""
-        You are a ReAct (Reasoning and Acting) agent meant to be a coding assistant.
-
-        Your goal is to reason about the query and decide on the best course of action to answer it accurately.
-        
-        Available tools: {tools.list_tools()}
-
-        CONTEXT CONTRACT:
-        - If the user refers to “it/this/the file/that” → target AGENT CONTEXT's LAST MODIFIED FILE.
-        - If the user uses pronouns about a NON-FILE concept (e.g., places, people, facts),
-        resolve them to AGENT CONTEXT's LAST TOPIC.
-        - Prefer the 'chat' tool for general Q&A; do NOT mention repo files unless asked. 
-        - Every file-affecting step MUST include args.path. If missing, auto-fill it from LAST MODIFIED FILE
-        and say so in "thought".
-        - The "thought" must explicitly name the target (file or topic).
-        Return ONLY a JSON array of steps (tool, args, thought). No markdown/code fences.
-    """
-    
-    user_prompt = f"""
-        You are a ReAct (Reasoning and Acting) coding agent tasked with answering the following query:
-        User query: {goal}
-
-        WORKSPACE CONTEXT:
-        {_clip(workspace_context, )}
-
-        AGENT CONTEXT:
-        {_clip(agent_context)}
-
-        Previous reasoning steps and observations: {_clip("".join(scratchpad))}
-
-        Instructions:
-            1. Analyze the query, previous reasoning steps, observations, and the provided Agent and Workspace contexts.
-            2. Decide on the next action: use a tool or provide a final answer.
-            3. Respond in the following JSON format:
-        
-        Break the task into sequential steps. Return ONLY the JSON array, no markdown.
-        Example:
-            {{
-                "thought": "Your detailed reasoning about what to do next",
-                "action": {{
-                    "tool": "tool_name",
-                    "args": {{"path": "file path if applicable", "content": "file content if applicable",}},
-                    "reason": "Short reason for using this tool."
-                }}
-            }}
-
-        Remember:
-            - Be thorough in your reasoning.
-            - Use tools when you need more information.
-            - Always base your reasoning on the actual observations from tool use.
-            - If a tool returns no results or fails, acknowledge this and consider using a different tool or approach.
-            - Provide a final answer only when you're confident you have sufficient information.
-            - If you cannot find the necessary information after using available tools, admit that you don't have enough information to answer the query confidently.
-        """
-
-    client = Cerebras(
-        # This is the default and can be omitted
-        api_key=os.environ.get("cerebras_api_key"),
-    )
-
-    params = dict(
-        messages=[
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": user_prompt},
-        ],
-        model="qwen-3-32b",
-        max_completion_tokens=2048,
-        temperature=0.6,
-        top_p=0.95
-    )
-
-    def _parse_json(txt: str) -> list:
-        txt = txt.strip()
-        if not txt:
-            return [{"tool": None, "args": {}, "thought": "Planner returned empty content."}]
-        # Find first '[' and last ']'
-        start = txt.find("[")
-        end = txt.rfind("]")
-        if start != -1 and end != -1 and end > start:
-            txt = txt[start:end+1]
-        try:
-            obj = json.loads(txt)
-            return obj if isinstance(obj, list) else [{"tool": None, "args": {}, "thought": f"Non-list planner output: {txt[:200]}..."}]
-        except Exception as e:
-            return [{"tool": None, "args": {}, "thought": f"Planner JSON error: {e}\nRaw: {txt[:500]}"}]
-
-    response_text = ""
-    try:
-        stream = client.chat.completions.create(stream=True, **params)
-        for chunk in stream:
-            delta = chunk.choices[0].delta
-            if delta and getattr(delta, "content", None):
-                response_text += delta.content
-    except Exception as _:
-        response_text = ""
-
-    if not response_text.strip():
-        try:
-            resp = client.chat.completions.create(stream=False, **params)
-            response_text = resp.choices[0].message.content or ""
-        except Exception as e:
-            return [{"tool": None, "args": {}, "thought": f"Planner transport error: {e}"}]
-        
-    print("Response from planner: ", response_text)
-    return _parse_json(response_text)
-
-
-
+# ========== Context Matters ==========
 def analyze_workspace(workspace_path: str, max_file_size: int = 4096) -> str:
     """
     Scans the workspace and returns a summary of files and their contents (truncated).
@@ -395,16 +305,13 @@ def analyze_workspace(workspace_path: str, max_file_size: int = 4096) -> str:
                 summary.append(f"{rel_path} (error reading: {e})")
     return "\n".join(summary)
 
-# ans = planner("Writing a website using html and css and javascript", [], tool_registry)
-# print(ans)
-
-# ========== Agent State =========
 @dataclass
 class AgentState:
     last_modified_file: Optional[str] = None
     recently_created_files: List[str] = field(default_factory=list)
     current_files: Dict[str, str] = field(default_factory=dict)
     session_context: str = ""
+    workspace_context: str = analyze_workspace(workspace_path = "./")
 
     last_topic: Optional[str] = None
     last_answer: Optional[str] = None
@@ -425,6 +332,9 @@ class AgentState:
     
     def get_context_string(self) -> str:
         context_parts = []
+
+        if self.workspace_context:
+            context_parts.append(f"WORKSPACE CONTEXT:\n{_clip(self.workspace_context, 1000)}")
         
         if self.last_modified_file:
             context_parts.append(f"LAST MODIFIED FILE: {self.last_modified_file}")
@@ -440,43 +350,139 @@ class AgentState:
             
         return "\n".join(context_parts) if context_parts else "No recent file operations"
 
+
 # ========== Agent Core ==========
 
+client = Groq(
+    api_key=os.environ.get("GROQ_API_KEY"),
+)
 
-def run_agent(goal: str, tool_registry: ToolRegistry, max_steps: int = 5, workspace_content: str = "Workspace is empty", agent_state: AgentState = None) -> str:
-    if agent_state is None:  
-        agent_state = AgentState() 
+class Agent():
+    def __init__(self, client, tool_registry: ToolRegistry, agent_state: AgentState = AgentState()):
+        self.tool_registry = tool_registry
+        self.state = AgentState()
+        self.messages = []
+        self.agent_state = agent_state # Will be used the handle context of the agent
+        self.client = client
+
+        self.system_prompt = f"""
+            You are a ReAct (Reasoning and Acting) coding assistant.
+
+            Goal: On each turn, emit ONLY the next step needed to progress the task.
+
+            - If your next step is to use a tool: output your "thought" and ONE "action".
+            - If your next step is to answer in natural language: output your "thought" and ONE "final".
+            Do not output plans, multiple steps, or arrays.
+
+            Available tools: {self.tool_registry.list_tools()}
+
+            AGENT CONTEXT:
+            {_clip(self.agent_state.get_context_string())}
+
+            CONTEXT CONTRACT (must follow exactly):
+
+            - If the user refers to “it/this/the file/that” → target AGENT CONTEXT's LAST MODIFIED FILE.
+            - If the user uses pronouns about a NON-FILE concept (e.g., places, people, facts),
+            resolve them to AGENT CONTEXT's LAST TOPIC.
+            - Prefer the 'chat' tool for general Q&A; do NOT mention repo files unless asked.
+            - Every file-affecting step MUST include args.path. If missing, auto-fill it from LAST MODIFIED FILE
+            and explicitly state that in "thought".
+            - The "thought" must explicitly name the target (file or topic).
+
+            I/O Protocol (STRICT):
+
+            - Input to you may include an "observation" from the last tool call; incorporate it before choosing the next step.
+            - Your entire output MUST be exactly ONE JSON object with these shapes:
+
+            When the next step is to use a tool:
+            {{
+                "thought": "<1-2 sentences; name the specific target file or topic>",
+                "action": {{
+                    "tool": "tool_name",
+                    "args": {{"path": "file path if applicable", "content": "file content if applicable",}},
+                    "reason": "Short reason for using this tool."
+                }}
+            }}
+
+            // When the next step is to answer directly (no tool use):
+            {{
+                "thought": "<1-2 sentences; name the specific target file or topic>",
+                "final": {{
+                    "message": "<your concise answer to the user>"
+                }}
+            }}
+
+            Hard rules:
+
+            - Output EXACTLY one of the two shapes above; never include both "action" and "final".
+            - Never return an array. Never wrap in markdown/code fences. No extra keys.
+            - Keep "thought" brief and target-explicit (e.g., “Target file: src/app.jsx” or “Target topic: API rate limits”).
+            - Keep args minimal and valid for the chosen tool. Do not invent tool names or args not listed in Available tools.
+            - If a file-affecting step is missing args.path, auto-fill it from the LAST MODIFIED FILE and state this in "thought".
+            - If no tool fits, choose the 'chat' tool (general Q&A) or produce "final".
+            - If prior observation indicates failure or no results, acknowledge that in "thought" and choose the most informative next step.
+
+            Decision policy:
+
+            - Choose the lowest-cost, most-informative next action that reduces uncertainty or makes concrete progress.
+            - If you have sufficient information to answer, prefer "final".
+
+            Now produce ONLY the next step as ONE JSON object, following the schema above.
+        """.strip()
+        if self.system_prompt:
+            self.messages.append({"role": "system", "content": self.system_prompt})
     
-    scratchpad = []
-    plan_steps = planner(goal, scratchpad, tool_registry, max_steps, workspace_content, agent_state.get_context_string())
+    def __call__(self, prompt:str = "") -> str: 
+        self.messages.append({"role": "user", "content": prompt})
+        result = self.execute()
+        self.messages.append({"role": "assistant", "content": result})
+        return _parse_json(result)
     
-    for idx, step in enumerate(plan_steps):
+    def execute(self):
+        params = dict(
+            model="moonshotai/kimi-k2-instruct",
+            messages=self.messages,
+            # temperature=0.6,
+            # max_completion_tokens=4096,
+            # top_p=1,
+            stream=True,
+            # stop=None
+        )
+        completion = self.client.chat.completions.create(**params)
+        response = ""
+        for chunk in completion:
+            response += chunk.choices[0].delta.content or ""
+        return response
+
+def react_loop(goal, agent: Agent, tool_registry: ToolRegistry, agent_state: AgentState, max_steps: int = 10):
+    observation = None
+    for step in range(max_steps):
         print(step)
-        action = step.get("action", {})
-        tool_name = action.get("tool")
-        args = action.get("args", {})
-        reasoning = action.get("reason", "")
-        
-        if not tool_name or tool_name not in tool_registry.tools:
-            print(f"Invalid tool name: {tool_name}. Stopping.")
-            break
+        prompt = goal if step == 0 else f"Observation: {observation.output if observation else ''}"
+        response = agent(prompt)
+        if "action" in response:
+            print("Taking some action...")
+            # Some action to take 
+            tool_name = response["action"].get("tool")
+            tool = tool_registry.get_tool(tool_name).fn
+            args = response["action"].get("args", {}) 
+            reason = response["action"].get("reason", "") 
+            print(f"Using the tool {tool_name} with args {args} because {reason}")
+            tool_result = tool(args, tool_registry.get_context())
+            # print(f"Tool result: {tool_result.output}")
+            agent_state.update_from_tool_result(tool_name, args, tool_result)
+            observation = tool_result
 
-        tool_fn = tool_registry.get_tool(tool_name).fn
-        result = tool_fn(args, tool_registry.get_context())
-        # print(f"Result: {result.output}")
+        elif "final" in response:
+            print("Final answer reached.")
+            return response["final"]["message"] 
 
-        agent_state.update_from_tool_result(tool_name, args, result)
-        if tool_name == "chat" and result.ok:
-            agent_state.last_topic = args.get("message", "")[:100]
-            agent_state.last_answer = result.output[:200]
 
-        scratchpad_entry = f"Thought: {reasoning}\nAction: {tool_name}\nAction Input: {json.dumps(args)}\nObservation: {result.output}\n" 
-        scratchpad.append(scratchpad_entry)
-    
-    # print("\nAgent Run complete")
-    return "\n".join(scratchpad)
+# state = AgentState()
+# jarvis = Agent(client, tool_registry, agent_state=state)
+# react_loop("Summarize the contents of HephAIstos.py in detail. Put them in a new file called blogg.md inside Blog directory", jarvis, tool_registry, state, max_steps=5)
 
-# ========== CLI Core ==========
+# ========== CLI User Interface ==========
 
 # ======== UI Helpers ==========
 BOLD  = "\033[1m"
@@ -602,23 +608,7 @@ def get_cli_art():
     ╚═╝  ╚═╝╚══════╝╚═╝     ╚═╝  ╚═╝╚═╝╚══════╝   ╚═╝    ╚═════╝ ╚══════╝
                                                                         
     """
-
-    cli_art_2 = """
-    __                             ______   ______              __                         
-    /  |                           /      \ /      |            /  |                        
-    $$ |____    ______    ______  /$$$$$$  |$$$$$$/   _______  _$$ |_    __    __   _______ 
-    $$      \  /      \  /      \ $$ |__$$ |  $$ |   /       |/ $$   |  /  |  /  | /       |
-    $$$$$$$  |/$$$$$$  |/$$$$$$  |$$    $$ |  $$ |  /$$$$$$$/ $$$$$$/   $$ |  $$ |/$$$$$$$/ 
-    $$ |  $$ |$$    $$ |$$ |  $$ |$$$$$$$$ |  $$ |  $$      \   $$ | __ $$ |  $$ |$$      \ 
-    $$ |  $$ |$$$$$$$$/ $$ |__$$ |$$ |  $$ | _$$ |_  $$$$$$  |  $$ |/  |$$ \__$$ | $$$$$$  |
-    $$ |  $$ |$$       |$$    $$/ $$ |  $$ |/ $$   |/     $$/   $$  $$/ $$    $$/ /     $$/ 
-    $$/   $$/  $$$$$$$/ $$$$$$$/  $$/   $$/ $$$$$$/ $$$$$$$/     $$$$/   $$$$$$/  $$$$$$$/  
-                        $$ |                                                                
-                        $$ |                                                                
-                        $$/                                                                     
-
-    """
-    return random.choice([cli_art_1, cli_art_2])
+    return cli_art_1
     
 
 def color_text(text, color_code):
@@ -628,11 +618,13 @@ def print_banner():
     banner = get_cli_art()
     print(color_text(banner, "36"))  # Cyan
 
-def cli(workspace_summary: str, session_agent_state: AgentState):
+def cli():
     print_banner()
     print(status("WELCOME", "HephAIstos, your autonomous coding assistant.", "32"))
     print(status("HINT", "Type a goal, or use :help for commands.", "33"))
 
+    session_agent_state = AgentState()
+    agent = Agent(client, tool_registry, agent_state=session_agent_state)
     while True:
         goal = read_goal_multiline(color_text("\n🔎 Enter your goal (use '\\' to continue): ", "34"))
 
@@ -650,9 +642,7 @@ def cli(workspace_summary: str, session_agent_state: AgentState):
 
         print("\n" + box("Running", f"Goal: {goal}"))
         with Spinner("Planning & executing...", "35"):
-            result = run_agent(goal, tool_registry, max_steps=5,
-                               workspace_content=workspace_summary,
-                               agent_state=session_agent_state)
+            result = react_loop(goal, agent, tool_registry, session_agent_state, max_steps=5)
 
         print(color_text("\n--- Agent Scratchpad ---", "36"))
         print(pretty_steps(result))
@@ -660,6 +650,4 @@ def cli(workspace_summary: str, session_agent_state: AgentState):
 
 
 if __name__ == "__main__":
-    workspace_summary = analyze_workspace(os.getcwd())
-    session_agent_state = AgentState()
-    cli(workspace_summary, session_agent_state)
+    cli()
