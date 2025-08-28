@@ -19,20 +19,25 @@ def safe_path(workspace, path) -> str:
 def _clip(s, n=4000):
     return s if len(s) <= n else s[:n] + "\n...[truncated]"
 
-def _parse_json(txt: str) -> list:
+def _parse_json(txt: str) -> dict:
     txt = txt.strip()
-    if not txt:
-        return [{"tool": None, "args": {}, "thought": "Planner returned empty content."}]
-    # Find first '[' and last ']'
-    start = txt.find("[")
-    end = txt.rfind("]")
+    # Remove code fences if present
+    if txt.startswith("```") and txt.endswith("```"):
+        txt = txt.strip("`").strip()
+    # Find first '{' and last '}'
+    start = txt.find("{")
+    end = txt.rfind("}")
     if start != -1 and end != -1 and end > start:
         txt = txt[start:end+1]
     try:
         obj = json.loads(txt)
-        return obj if isinstance(obj, list) else [{"tool": None, "args": {}, "thought": f"Non-list planner output: {txt}..."}]
+        # Validate shape
+        if "thought" in obj and ("action" in obj or "final" in obj):
+            return obj
+        else:
+            return {"thought": "Parse error: missing required keys.", "action": None, "final": None}
     except Exception as e:
-        return [{"tool": None, "args": {}, "thought": f"Planner JSON error: {e}\nRaw: {txt[:500]}"}]
+        return {"thought": f"JSON parse error: {e}\nRaw: {txt[:500]}", "action": None, "final": None}
     
 # ========== Defining the Tools Registry ========== 
  
@@ -428,7 +433,7 @@ class Agent():
         self.messages.append({"role": "user", "content": prompt})
         result = self.execute()
         self.messages.append({"role": "assistant", "content": result})
-        return result
+        return _parse_json(result)
     
     def execute(self):
         params = dict(
@@ -451,142 +456,33 @@ class Agent():
 state = AgentState()
 jarvis = Agent(client, tool_registry, agent_state=state)
 system_prompt = jarvis.system_prompt
-Result = jarvis("Read the content of HephAIstos.py and summarize its purpose.")
-print(Result)
-observation = _tool_read_file({"path": "HephAIstos.py"}, tool_registry.get_context())
-Result = jarvis(f"Observation: {observation.output}")
+# Result = jarvis("Read the content of HephAIstos.py and write its purpose in detail.")
+# print(Result)
+# observation = _tool_read_file({"path": "HephAIstos.py"}, tool_registry.get_context())
+# Result = jarvis(f"Observation: {observation.output}")
+# print(Result)
 
+def react_loop(goal, agent: Agent, tool_registry: ToolRegistry, agent_state: AgentState, max_steps: int = 10):
+    observation = None
+    for step in range(max_steps):
+        print(step)
+        prompt = goal if step == 0 else f"Observation: {observation.output if observation else ''}"
+        response = agent(prompt)
+        if "action" in response:
+            print("Taking some action...")
+            # Some action to take 
+            tool_name = response["action"].get("tool")
+            tool = tool_registry.get_tool(tool_name).fn
+            args = response["action"].get("args", {}) 
+            reason = response["action"].get("reason", "") 
+            print(f"Using the tool {tool_context} with args {args} because {reason}")
+            tool_result = tool(args, tool_registry.get_context())
+            # print(f"Tool result: {tool_result.output}")
+            agent_state.update_from_tool_result(tool_name, args, tool_result)
+            observation = tool_result
 
-# def planner(goal: str, scratchpad: list[str], tools: ToolRegistry, steps: int = 5, workspace_context: str = "Workspace is empty", agent_context: str = "") -> dict:
-#     """
-#     Prompts an LLM to select a tool and arguments for the agent.
-#     Returns a dict: {"tool": <tool_name>, "args": {...}, "thought": <reasoning>}
-#     """
-#     def _clip(s, n=4000):
-#         return s if len(s) <= n else s[:n] + "\n...[truncated]"
-    
-    
-    
-#     user_prompt = f"""
-#         You are a ReAct (Reasoning and Acting) coding agent tasked with answering the following query:
-#         User query: {goal}
+        elif "final" in response:
+            print("Final answer reached.")
+            return response["final"]["message"] 
 
-#         WORKSPACE CONTEXT:
-#         {_clip(workspace_context, )}
-
-#         AGENT CONTEXT:
-#         {_clip(agent_context)}
-
-#         Previous reasoning steps and observations: {_clip("".join(scratchpad))}
-
-#         Instructions:
-#             1. Analyze the query, previous reasoning steps, observations, and the provided Agent and Workspace contexts.
-#             2. Decide on the next action: use a tool or provide a final answer.
-#             3. Respond in the following JSON format:
-        
-#         Break the task into sequential steps. Return ONLY the JSON array, no markdown.
-#         Example:
-#             {{
-#                 "thought": "Your detailed reasoning about what to do next",
-#                 "action": {{
-#                     "tool": "tool_name",
-#                     "args": {{"path": "file path if applicable", "content": "file content if applicable",}},
-#                     "reason": "Short reason for using this tool."
-#                 }}
-#             }}
-
-#         Remember:
-#             - Be thorough in your reasoning.
-#             - Use tools when you need more information.
-#             - Always base your reasoning on the actual observations from tool use.
-#             - If a tool returns no results or fails, acknowledge this and consider using a different tool or approach.
-#             - Provide a final answer only when you're confident you have sufficient information.
-#             - If you cannot find the necessary information after using available tools, admit that you don't have enough information to answer the query confidently.
-#         """
-
-#     client = Cerebras(
-#         # This is the default and can be omitted
-#         api_key=os.environ.get("cerebras_api_key"),
-#     )
-
-#     params = dict(
-#         messages=[
-#             {"role": "system", "content": system_prompt},
-#             {"role": "user", "content": user_prompt},
-#         ],
-#         model="qwen-3-32b",
-#         max_completion_tokens=2048,
-#         temperature=0.6,
-#         top_p=0.95
-#     )
-
-#     def _parse_json(txt: str) -> list:
-#         txt = txt.strip()
-#         if not txt:
-#             return [{"tool": None, "args": {}, "thought": "Planner returned empty content."}]
-#         # Find first '[' and last ']'
-#         start = txt.find("[")
-#         end = txt.rfind("]")
-#         if start != -1 and end != -1 and end > start:
-#             txt = txt[start:end+1]
-#         try:
-#             obj = json.loads(txt)
-#             return obj if isinstance(obj, list) else [{"tool": None, "args": {}, "thought": f"Non-list planner output: {txt[:200]}..."}]
-#         except Exception as e:
-#             return [{"tool": None, "args": {}, "thought": f"Planner JSON error: {e}\nRaw: {txt[:500]}"}]
-
-#     response_text = ""
-#     try:
-#         stream = client.chat.completions.create(stream=True, **params)
-#         for chunk in stream:
-#             delta = chunk.choices[0].delta
-#             if delta and getattr(delta, "content", None):
-#                 response_text += delta.content
-#     except Exception as _:
-#         response_text = ""
-
-#     if not response_text.strip():
-#         try:
-#             resp = client.chat.completions.create(stream=False, **params)
-#             response_text = resp.choices[0].message.content or ""
-#         except Exception as e:
-#             return [{"tool": None, "args": {}, "thought": f"Planner transport error: {e}"}]
-        
-#     print("Response from planner: ", response_text)
-#     return _parse_json(response_text)
-
-
-# def run_agent(goal: str, tool_registry: ToolRegistry, max_steps: int = 5, workspace_content: str = "Workspace is empty", agent_state: AgentState = None) -> str:
-#     if agent_state is None:  
-#         agent_state = AgentState() 
-    
-#     scratchpad = []
-#     plan_steps = planner(goal, scratchpad, tool_registry, max_steps, workspace_content, agent_state.get_context_string())
-    
-#     for idx, step in enumerate(plan_steps):
-#         print(step)
-#         action = step.get("action", {})
-#         tool_name = action.get("tool")
-#         args = action.get("args", {})
-#         reasoning = action.get("reason", "")
-        
-#         if not tool_name or tool_name not in tool_registry.tools:
-#             print(f"Invalid tool name: {tool_name}. Stopping.")
-#             break
-
-#         tool_fn = tool_registry.get_tool(tool_name).fn
-#         result = tool_fn(args, tool_registry.get_context())
-#         # print(f"Result: {result.output}")
-
-#         agent_state.update_from_tool_result(tool_name, args, result)
-#         if tool_name == "chat" and result.ok:
-#             agent_state.last_topic = args.get("message", "")[:100]
-#             agent_state.last_answer = result.output[:200]
-
-#         scratchpad_entry = f"Thought: {reasoning}\nAction: {tool_name}\nAction Input: {json.dumps(args)}\nObservation: {result.output}\n" 
-#         scratchpad.append(scratchpad_entry)
-    
-#     print("\nAgent Run complete")
-#     return "\n".join(scratchpad)
-
-
+react_loop("Summarize the contents of HephAIstos.py in detail. Put them in a new file called blogg.md inside Blog directory", jarvis, tool_registry, state, max_steps=5)
