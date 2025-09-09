@@ -3,6 +3,7 @@ from typing import Callable, Dict, List, Optional
 import os 
 import json 
 from groq import Groq
+from openai import OpenAI
 from dotenv import load_dotenv
 load_dotenv()
 
@@ -212,6 +213,23 @@ def _tool_chat(args: dict, context: ToolContext) -> ToolResult:
     if not message:
         return ToolResult(ok=False, output="No message provided.")
     return ToolResult(ok=True, output=f"🤖 Suggestion: {message}")
+
+def _tool_search_web(args: dict, context: ToolContext) -> ToolResult:
+    query = args.get("query", "")
+    if not query:
+        return ToolResult(ok=False, output="No query provided.")
+    
+    client = OpenAI(
+        base_url = "https://api.exa.ai",
+        api_key = os.environ.get("EXA_API_KEY"),
+    )
+
+    completion = client.chat.completions.create(
+        model = "exa",
+        messages = [{"role":"user","content": query}],
+        stream = False
+    )
+    return ToolResult(ok=True, output=f"Search Results: {completion.choices[0].message.content}")
     
 # ========== Registering Tools ==========
 tool_dict = {
@@ -259,6 +277,11 @@ tool_dict = {
         name="patch_file",
         description="Applies a list of line-based changes (diff patch) to a file. Usage: args={'path':..., 'changes':[{'action':'replace','line':2,'content':'new text'}, ...]}",
         fn=_tool_patch_file
+    ),
+    "search_web": Tool(
+        name="search_web",
+        description="Searches the web for a query and returns summarized results.",
+        fn=_tool_search_web
     )
 }
 
@@ -439,11 +462,7 @@ class Agent():
         params = dict(
             model="moonshotai/kimi-k2-instruct",
             messages=self.messages,
-            # temperature=0.6,
-            # max_completion_tokens=4096,
-            # top_p=1,
             stream=True,
-            # stop=None
         )
         completion = self.client.chat.completions.create(**params)
         response = ""
@@ -649,3 +668,6 @@ def cli():
 
 if __name__ == "__main__":
     cli()
+
+
+    

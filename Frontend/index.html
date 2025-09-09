@@ -1,0 +1,90 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>HephAIStos - AI Coding Agent</title>
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <header>
+        <nav>
+            <h1>HephAIStos</h1>
+            <ul>
+                <li><a href="#home">Home</a></li>
+                <li><a href="#features">Features</a></li>
+                <li><a href="#about">About</a></li>
+                <li><a href="#get-started">Get Started</a></li>
+            </ul>
+        </nav>
+    </header>
+
+    <main>
+        <section id="home" class="hero">
+            <div class="hero-content">
+                <h2>Your AI-Powered CLI Coding Assistant</h2>
+                <p>HephAIStos is a modular, extensible AI agent built for your command line interface. Automate your coding tasks with intelligent tooling and planning.</p>
+                <button onclick="scrollToSection('get-started')">Get Started</button>
+            </div>
+        </section>
+
+        <section id="features" class="features">
+            <h2>Core Components</h2>
+            <div class="feature-grid">
+                <div class="feature-card">
+                    <h3>Tool Registry</h3>
+                    <p>Register and retrieve tool functions dynamically</p>
+                </div>
+                <div class="feature-card">
+                    <h3>Planner</h3>
+                    <p>Rule-based decision making (LLM support coming soon)</p>
+                </div>
+                <div class="feature-card">
+                    <h3>Agent Core</h3>
+                    <p>Main loop handling goals, tool calls, and scratchpad</p>
+                </div>
+                <div class="feature-card">
+                    <h3>CLI Interface</h3>
+                    <p>Simple command-line entry point for users</p>
+                </div>
+            </div>
+        </section>
+
+        <section id="about" class="about">
+            <h2>About HephAIStos</h2>
+            <p>HephAIStos is designed around three main concepts: Tool Implementations, Planner, and Agent Core. The architecture aims to be modular, testable, and easy to extend with new tools or planning strategies.</p>
+            
+            <div class="architecture">
+                <h3>Architecture Overview</h3>
+                <ul>
+                    <li><strong>Modular Design:</strong> Easy to extend with new tools</li>
+                    <li><strong>Testable:</strong> Each component can be tested independently</li>
+                    <li><strong>Extensible:</strong> Support for new planning strategies</li>
+                    <li><strong>Safe:</strong> File sandboxing and safety helpers</li>
+                </ul>
+            </div>
+        </section>
+
+        <section id="get-started" class="get-started">
+            <h2>Get Started</h2>
+            <div class="steps">
+                <ol>
+                    <li>Clone the repository from GitHub</li>
+                    <li>Install dependencies: <code>pip install -r requirements.txt</code></li>
+                    <li>Create your <code>.env</code> file with your API keys</li>
+                    <li>Run: <code>python hephaistos.py</code></li>
+                </ol>
+            </div>
+            <div class="cta">
+                <a href="https://github.com/your-repo/hephaistos" class="github-btn">View on GitHub</a>
+            </div>
+        </section>
+    </main>
+
+    <footer>
+        <p>&copy; 2024 HephAIStos. Built with AI assistance.</p>
+    </footer>
+
+    <script src="script.js"></script>
+</body>
+</html>
