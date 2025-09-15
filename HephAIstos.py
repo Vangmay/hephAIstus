@@ -5,6 +5,7 @@ import json
 from groq import Groq
 from openai import OpenAI
 from dotenv import load_dotenv
+import subprocess
 load_dotenv()
 
 # ========== Helper Functions / Guard Rails ==========
@@ -230,6 +231,38 @@ def _tool_search_web(args: dict, context: ToolContext) -> ToolResult:
         stream = False
     )
     return ToolResult(ok=True, output=f"Search Results: {completion.choices[0].message.content}")
+
+def _tool_git_add(args: dict, context: ToolContext) -> ToolResult:
+    files = args.get("files", ".")
+    try:
+        if isinstance(files, str):
+            files = [files]
+        
+        for file in files:
+            result = subprocess.run(['git', 'add', file], 
+                                   cwd=context.workspace_path, capture_output=True, text=True)
+            if result.returncode != 0:
+                return ToolResult(ok=False, output=f"Error adding {file}: {result.stderr}")
+        
+        return ToolResult(ok=True, output=f"Successfully added {files}")
+    except Exception as e:
+        return ToolResult(ok=False, output=f"Error adding files: {e}")
+
+def _tool_git_commit(args: dict, context: ToolContext) -> ToolResult:
+    message = args.get("message")
+    if not message:
+        return ToolResult(ok=False, output="Commit message is required")
+    
+    try:
+        result = subprocess.run(['git', 'commit', '-m', message], 
+                               cwd=context.workspace_path, capture_output=True, text=True)
+        
+        if result.returncode != 0:
+            return ToolResult(ok=False, output=f"Error committing: {result.stderr}")
+        
+        return ToolResult(ok=True, output=f"Committed successfully: {message}")
+    except Exception as e:
+        return ToolResult(ok=False, output=f"Error committing: {e}")
     
 # ========== Registering Tools ==========
 tool_dict = {
@@ -282,7 +315,17 @@ tool_dict = {
         name="search_web",
         description="Searches the web for a query and returns summarized results.",
         fn=_tool_search_web
-    )
+    ),
+    "git_add": Tool(
+        name="git_add",
+        description="Add files to git staging area.",
+        fn=_tool_git_add
+    ),
+    "git_commit": Tool(
+        name="git_commit",
+        description="Commit changes to git repository.",
+        fn=_tool_git_commit
+    ),
 }
 
 def build_tool_registry(tool_dict) -> ToolRegistry:
@@ -479,6 +522,7 @@ def react_loop(goal, agent: Agent, tool_registry: ToolRegistry, agent_state: Age
         if "action" in response:
             print("Taking some action...")
             # Some action to take 
+            print("RESPONSE: ", response)
             tool_name = response["action"].get("tool")
             tool = tool_registry.get_tool(tool_name).fn
             args = response["action"].get("args", {}) 
@@ -668,6 +712,3 @@ def cli():
 
 if __name__ == "__main__":
     cli()
-
-
-    
