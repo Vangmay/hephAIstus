@@ -1,45 +1,129 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8">
-  <title>HephAIStos – AI Coding Agent</title>
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <link rel="stylesheet" href="styles.css">
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>HephAIStos - AI Coding Agent</title>
+    <link rel="stylesheet" href="styles.css">
 </head>
 <body>
-  <header>
-    <h1>HephAIStos</h1>
-    <p>An AI Coding Agent built for your CLI</p>
-  </header>
+    <header>
+        <nav>
+            <div class="logo">
+                <h1>HephAIStos</h1>
+                <span class="tagline">AI Coding Agent</span>
+            </div>
+            <ul class="nav-links">
+                <li><a href="#home">Home</a></li>
+                <li><a href="#features">Features</a></li>
+                <li><a href="#docs">Docs</a></li>
+                <li><a href="#github">GitHub</a></li>
+            </ul>
+        </nav>
+    </header>
 
-  <main>
-    <section id="overview">
-      <h2>Overview</h2>
-      <p>HephAIStos is a modular, extensible agent that combines tool implementations, a planner, and an agent core to help you code faster and safer.</p>
-    </section>
+    <main>
+        <section id="home" class="hero">
+            <div class="hero-content">
+                <h2>Your AI-Powered Coding Assistant</h2>
+                <p>HephAIStos is an intelligent coding agent designed to work within your CLI, providing powerful tools and smart planning capabilities.</p>
+                <div class="cta-buttons">
+                    <button class="btn-primary" onclick="scrollToSection('features')">Get Started</button>
+                    <button class="btn-secondary" onclick="window.open('https://github.com/your-repo/HephAIStos', '_blank')">View on GitHub</button>
+                </div>
+            </div>
+            <div class="hero-visual">
+                <div class="code-window">
+                    <div class="window-header">
+                        <span class="dot red"></span>
+                        <span class="dot yellow"></span>
+                        <span class="dot green"></span>
+                    </div>
+                    <pre class="code-content">
+<span class="keyword">import</span> <span class="module">hephaistos</span>
 
-    <section id="features">
-      <h2>Key Features</h2>
-      <ul>
-        <li>Tool Registry for easy extension</li>
-        <li>Rule-based (and soon LLM-based) planning</li>
-        <li>Sandboxed file operations for safety</li>
-        <li>Simple CLI entry point</li>
-      </ul>
-    </section>
+<span class="comment"># Initialize the AI agent</span>
+agent = hephaistos.Agent()
+agent.set_goal("Build a web app")
 
-    <section id="start">
-      <h2>Get Started</h2>
-      <ol>
-        <li>Clone the repo</li>
-        <li><code>pip install -r requirements.txt</code></li>
-        <li><code>python HephAIstos.py</code></li>
-      </ol>
-    </section>
-  </main>
+<span class="comment"># Let the magic happen</span>
+agent.run()
+                    </pre>
+                </div>
+            </div>
+        </section>
 
-  <footer>
-    <p>Built with 🔥 by the HephAIStos team</p>
-  </footer>
+        <section id="features" class="features">
+            <h2>Core Features</h2>
+            <div class="features-grid">
+                <div class="feature-card">
+                    <div class="icon">🛠️</div>
+                    <h3>Tool System</h3>
+                    <p>Modular tool implementations for file operations, code execution, web search, and more.</p>
+                </div>
+                <div class="feature-card">
+                    <div class="icon">🧠</div>
+                    <h3>Smart Planning</h3>
+                    <p>Intelligent planner that decides next actions based on goals and current state.</p>
+                </div>
+                <div class="feature-card">
+                    <div class="icon">🔄</div>
+                    <h3>Agent Core</h3>
+                    <p>Orchestrates the main loop, maintains scratchpad, and manages tool interactions.</p>
+                </div>
+                <div class="feature-card">
+                    <div class="icon">⚡</div>
+                    <h3>CLI Interface</h3>
+                    <p>Simple command-line entry point for easy integration into your workflow.</p>
+                </div>
+            </div>
+        </section>
+
+        <section id="docs" class="docs-preview">
+            <h2>Quick Start</h2>
+            <div class="install-steps">
+                <div class="step">
+                    <span class="step-number">1</span>
+                    <div class="step-content">
+                        <h3>Clone the Repository</h3>
+                        <code>git clone https://github.com/your-repo/HephAIStos.git</code>
+                    </div>
+                </div>
+                <div class="step">
+                    <span class="step-number">2</span>
+                    <div class="step-content">
+                        <h3>Install Dependencies</h3>
+                        <code>pip install -r requirements.txt</code>
+                    </div>
+                </div>
+                <div class="step">
+                    <span class="step-number">3</span>
+                    <div class="step-content">
+                        <h3>Set Up Environment</h3>
+                        <code>cp .env.example .env</code>
+                        <p>Edit .env with your API keys</p>
+                    </div>
+                </div>
+                <div class="step">
+                    <span class="step-number">4</span>
+                    <div class="step-content">
+                        <h3>Run the Agent</h3>
+                        <code>python main.py</code>
+                    </div>
+                </div>
+            </div>
+        </section>
+    </main>
+
+    <footer>
+        <div class="footer-content">
+            <p>&copy; 2024 HephAIStos. Open source project.</p>
+            <div class="footer-links">
+                <a href="#home">Back to Top</a>
+            </div>
+        </div>
+    </footer>
+
+    <script src="script.js"></script>
 </body>
 </html>

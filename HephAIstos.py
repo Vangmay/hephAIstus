@@ -264,6 +264,19 @@ def _tool_git_commit(args: dict, context: ToolContext) -> ToolResult:
     except Exception as e:
         return ToolResult(ok=False, output=f"Error committing: {e}")
     
+def _tool_git_push(args: dict, context: ToolContext) -> ToolResult:
+    remote = args.get("remote", "origin")
+    branch = args.get("branch", "main")
+    try:
+        result = subprocess.run(['git', 'push', remote, branch], 
+                               cwd=context.workspace_path, capture_output=True, text=True)
+        if result.returncode != 0:
+            return ToolResult(ok=False, output=f"Error pushing to {remote}/{branch}: {result.stderr}")
+        
+        return ToolResult(ok=True, output=f"Pushed successfully to {remote}/{branch}")
+    except Exception as e:
+        return ToolResult(ok=False, output=f"Error pushing: {e}")
+    
 # ========== Registering Tools ==========
 tool_dict = {
     "chat": Tool(
@@ -325,6 +338,11 @@ tool_dict = {
         name="git_commit",
         description="Commit changes to git repository.",
         fn=_tool_git_commit
+    ),
+    "git_push": Tool(
+        name="git_push",
+        description="Push committed changes to remote git repository.",
+        fn=_tool_git_push
     ),
 }
 
