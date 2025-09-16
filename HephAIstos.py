@@ -6,6 +6,7 @@ from groq import Groq
 from openai import OpenAI
 from dotenv import load_dotenv
 import subprocess
+import textwrap
 load_dotenv()
 
 # ========== Helper Functions / Guard Rails ==========
@@ -534,20 +535,17 @@ class Agent():
 def react_loop(goal, agent: Agent, tool_registry: ToolRegistry, agent_state: AgentState, max_steps: int = 10):
     observation = None
     for step in range(max_steps):
-        print(step)
         prompt = goal if step == 0 else f"Observation: {observation.output if observation else ''}"
         response = agent(prompt)
         if "action" in response:
             print("Taking some action...")
             # Some action to take 
-            print("RESPONSE: ", response)
             tool_name = response["action"].get("tool")
             tool = tool_registry.get_tool(tool_name).fn
             args = response["action"].get("args", {}) 
             reason = response["action"].get("reason", "") 
-            print(f"Using the tool {tool_name} with args {args} because {reason}")
+            print(f"Using the tool {tool_name} with args {args} so that I can {reason}")
             tool_result = tool(args, tool_registry.get_context())
-            # print(f"Tool result: {tool_result.output}")
             agent_state.update_from_tool_result(tool_name, args, tool_result)
             observation = tool_result
 
@@ -571,14 +569,19 @@ RESET = "\033[0m"
 def hr(char="─", width=80):
     return char * width
 
-def box(title: str, body: str, width: int = 80) -> str:
+def box(title: str, body: str, width: int = 120) -> str:
     title = f" {title} "
     top    = f"┌{hr('─', width-2)}┐"
     midttl = f"│{title[:width-2].ljust(width-2)}│"
     sep    = f"├{hr('─', width-2)}┤"
-    lines  = [f"│ {line[:width-3].ljust(width-3)}│" for line in body.splitlines() or [""]]
+    # Wrap each line to the box width
+    lines = []
+    for line in body.splitlines() or [""]:
+        for wrapped in textwrap.wrap(line, width=width-4) or [""]:
+            lines.append(f"│ {wrapped.ljust(width-3)}│")
     bot    = f"└{hr('─', width-2)}┘"
     return "\n".join([top, midttl, sep, *lines, bot])
+
 
 def status(label: str, msg: str, color="36"):  # default cyan
     return f"\033[{color}m[{label}]\033[0m {msg}"
@@ -598,7 +601,6 @@ def pretty_steps(scratchpad: str, width: int = 80) -> str:
         else:
             rendered.append(box(f"Step {i}", b, width))
     return "\n".join(rendered) if rendered else "(no steps)"
-
 
 def read_goal_multiline(prompt_text: str) -> str:
     """Allow multi-line input by ending lines with a backslash."""
@@ -725,6 +727,39 @@ def cli():
 
         print(color_text("\n--- Agent Scratchpad ---", "36"))
         print(pretty_steps(result))
+
+def cli():
+    print_banner()
+    print(status("WELCOME", "HephAIstos, your autonomous coding assistant.", "32"))
+    print(status("HINT", "Type a goal, or use :help for commands.", "33"))
+
+    session_agent_state = AgentState()
+    agent = Agent(client, tool_registry, agent_state=session_agent_state)
+    while True:
+        # 2. Consistent and minimal prompt
+        goal = input(color_text("hephAIstos > ", "34")).strip()
+
+        if goal.startswith(":"):
+            out = handle_command(goal, tool_registry, session_agent_state)
+            if out == "__EXIT__":
+                print(status("BYE", "Exiting HephAIstos. Goodbye!", "31"))
+                break
+            print(out or status("ERR", "Unknown command. Try :help.", "31"))
+            continue
+
+        if not goal:
+            print(status("WARN", "Empty goal. Try again.", "33"))
+            continue
+
+        # 3. Clear output separation
+        print(hr())
+        with Spinner("Thinking...", "35"):
+            result = react_loop(goal, agent, tool_registry, session_agent_state, max_steps=25)
+
+        # 4. Simplify step output (numbered list, no box for every step)
+        print(color_text("\n--- Agent Steps ---", "36"))
+        print(pretty_steps(result))
+        print(hr())
 
 
 
