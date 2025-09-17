@@ -681,13 +681,14 @@ class Spinner:
 
 def get_cli_art():
     cli_art_1 = """
-    ██╗  ██╗███████╗██████╗  █████╗ ██╗███████╗████████╗██╗   ██╗███████╗
-    ██║  ██║██╔════╝██╔══██╗██╔══██╗██║██╔════╝╚══██╔══╝██║   ██║██╔════╝
-    ███████║█████╗  ██████╔╝███████║██║███████╗   ██║   ██║   ██║███████╗
-    ██╔══██║██╔══╝  ██╔═══╝ ██╔══██║██║╚════██║   ██║   ██║   ██║╚════██║
-    ██║  ██║███████╗██║     ██║  ██║██║███████║   ██║   ╚██████╔╝███████║
-    ╚═╝  ╚═╝╚══════╝╚═╝     ╚═╝  ╚═╝╚═╝╚══════╝   ╚═╝    ╚═════╝ ╚══════╝
-                                                                        
+                                                                                        
+ ▄    ▄               █        █▀     ▄▄   ▄▄▄▄▄   ▀█             ▄                 
+ █    █  ▄▄▄   ▄▄▄▄   █ ▄▄     █      ██     █      █     ▄▄▄   ▄▄█▄▄  ▄   ▄   ▄▄▄  
+ █▄▄▄▄█ █▀  █  █▀ ▀█  █▀  █    █     █  █    █      █    █   ▀    █    █   █  █   ▀ 
+ █    █ █▀▀▀▀  █   █  █   █    █     █▄▄█    █      █     ▀▀▀▄    █    █   █   ▀▀▀▄ 
+ █    █ ▀█▄▄▀  ██▄█▀  █   █    █    █    █ ▄▄█▄▄    █    ▀▄▄▄▀    ▀▄▄  ▀▄▄▀█  ▀▄▄▄▀ 
+               █               ▀▀                  ▀▀                               
+               ▀                                                                                                                                
     """
     return cli_art_1
     
@@ -727,41 +728,6 @@ def cli():
 
         print(color_text("\n--- Agent Scratchpad ---", "36"))
         print(pretty_steps(result))
-
-def cli():
-    print_banner()
-    print(status("WELCOME", "HephAIstos, your autonomous coding assistant.", "32"))
-    print(status("HINT", "Type a goal, or use :help for commands.", "33"))
-
-    session_agent_state = AgentState()
-    agent = Agent(client, tool_registry, agent_state=session_agent_state)
-    while True:
-        # 2. Consistent and minimal prompt
-        goal = input(color_text("hephAIstos > ", "34")).strip()
-
-        if goal.startswith(":"):
-            out = handle_command(goal, tool_registry, session_agent_state)
-            if out == "__EXIT__":
-                print(status("BYE", "Exiting HephAIstos. Goodbye!", "31"))
-                break
-            print(out or status("ERR", "Unknown command. Try :help.", "31"))
-            continue
-
-        if not goal:
-            print(status("WARN", "Empty goal. Try again.", "33"))
-            continue
-
-        # 3. Clear output separation
-        print(hr())
-        with Spinner("Thinking...", "35"):
-            result = react_loop(goal, agent, tool_registry, session_agent_state, max_steps=25)
-
-        # 4. Simplify step output (numbered list, no box for every step)
-        print(color_text("\n--- Agent Steps ---", "36"))
-        print(pretty_steps(result))
-        print(hr())
-
-
 
 if __name__ == "__main__":
     cli()
