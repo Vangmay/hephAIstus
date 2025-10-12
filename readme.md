@@ -46,7 +46,8 @@
 
    ```bash
    git clone <repository-url>
-   cd hephaistus
+   cd
+   hephAIstos
    ```
 
 2. Install dependencies:
