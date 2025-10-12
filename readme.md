@@ -2,6 +2,12 @@
 
 **HephAIstos** is an autonomous coding assistant powered by ReAct (Reasoning and Acting) methodology. Named after the Greek god of fire and forge, HephAIstos helps you build, modify, and manage code projects through natural language conversations.
 
+## Demo
+
+[![Watch the video](https://img.youtube.com/vi/YIwN4l4LuxI/3.jpg)](https://youtu.be/YIwN4l4LuxI?si=eUqtSghwDqh1QEZ7)
+
+## About
+
 ```
 
  ▄    ▄               █        █▀     ▄▄   ▄▄▄▄▄   ▀█             ▄
@@ -169,16 +175,5 @@ This project is licensed under the MIT License - see the LICENSE file for detail
 - Built with [Groq](https://groq.com/) for fast LLM inference
 - Web search powered by [Exa](https://exa.ai/)
 - Inspired by the ReAct methodology from research papers
-
-## 📞 Support
-
-If you encounter any issues or have questions:
-
-1. Check the `:help` command in the CLI
-2. Review the available tools with `:tools`
-3. Check your agent state with `:state`
-4. Open an issue on GitHub
-
----
 
 **HephAIstos** - Forging code with the power of AI 🔥⚒️
