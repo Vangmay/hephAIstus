@@ -1,0 +1,94 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>HephAIstos.py - AI-Powered Automation Tool</title>
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <header>
+        <nav>
+            <div class="logo">
+                <h1>HephAIstos.py</h1>
+            </div>
+            <ul class="nav-links">
+                <li><a href="#home">Home</a></li>
+                <li><a href="#features">Features</a></li>
+                <li><a href="#demo">Demo</a></li>
+                <li><a href="#documentation">Documentation</a></li>
+            </ul>
+        </nav>
+    </header>
+
+    <main>
+        <section id="home" class="hero">
+            <div class="hero-content">
+                <h2>AI-Powered Automation Tool</h2>
+                <p>Transform your workflow with intelligent automation using cutting-edge AI models</p>
+                <button class="cta-button" onclick="scrollToSection('demo')">Get Started</button>
+            </div>
+        </section>
+
+        <section id="features" class="features">
+            <h2>Key Features</h2>
+            <div class="features-grid">
+                <div class="feature-card">
+                    <h3>Multi-Model Support</h3>
+                    <p>Integrates with Groq, Cerebras, and Exa APIs for diverse AI capabilities</p>
+                </div>
+                <div class="feature-card">
+                    <h3>Intelligent Automation</h3>
+                    <p>Automate complex tasks with AI-powered decision making</p>
+                </div>
+                <div class="feature-card">
+                    <h3>Environment Management</h3>
+                    <p>Secure API key management with environment variables</p>
+                </div>
+                <div class="feature-card">
+                    <h3>Extensible Architecture</h3>
+                    <p>Modular design for easy customization and expansion</p>
+                </div>
+            </div>
+        </section>
+
+        <section id="demo" class="demo">
+            <h2>Interactive Demo</h2>
+            <div class="demo-container">
+                <div class="input-section">
+                    <h3>Try HephAIstos.py</h3>
+                    <textarea id="userInput" placeholder="Enter your task or question here..."></textarea>
+                    <button onclick="processInput()">Process</button>
+                </div>
+                <div class="output-section">
+                    <h3>Result</h3>
+                    <div id="output" class="output-box">Results will appear here...</div>
+                </div>
+            </div>
+        </section>
+
+        <section id="documentation" class="documentation">
+            <h2>Documentation</h2>
+            <div class="docs-content">
+                <h3>Installation</h3>
+                <pre><code>pip install -r requirements.txt</code></pre>
+                
+                <h3>Configuration</h3>
+                <p>Set up your API keys in the .env file:</p>
+                <pre><code>CEREBRAS_API_KEY=your_cerebras_key
+GROQ_API_KEY=your_groq_key
+EXA_API_KEY=your_exa_key</code></pre>
+                
+                <h3>Usage</h3>
+                <pre><code>python HephAIstos.py</code></pre>
+            </div>
+        </section>
+    </main>
+
+    <footer>
+        <p>&copy; 2024 HephAIstos.py - AI-Powered Automation Tool</p>
+    </footer>
+
+    <script src="script.js"></script>
+</body>
+</html>

@@ -522,7 +522,7 @@ class Agent():
     
     def execute(self):
         params = dict(
-            model="moonshotai/kimi-k2-instruct",
+            model="moonshotai/kimi-k2-instruct-0905",
             messages=self.messages,
             stream=True,
         )
@@ -544,6 +544,7 @@ def react_loop(goal, agent: Agent, tool_registry: ToolRegistry, agent_state: Age
             tool = tool_registry.get_tool(tool_name).fn
             args = response["action"].get("args", {}) 
             reason = response["action"].get("reason", "") 
+            print(response)
             print(f"Using the tool {tool_name} with args {args} so that I can {reason}")
             tool_result = tool(args, tool_registry.get_context())
             agent_state.update_from_tool_result(tool_name, args, tool_result)
@@ -553,11 +554,6 @@ def react_loop(goal, agent: Agent, tool_registry: ToolRegistry, agent_state: Age
             print("Final answer reached.")
             return response["final"]["message"]
     return agent.messages[-1]["content"] 
-
-
-# state = AgentState()
-# jarvis = Agent(client, tool_registry, agent_state=state)
-# react_loop("Summarize the contents of HephAIstos.py in detail. Put them in a new file called blogg.md inside Blog directory", jarvis, tool_registry, state, max_steps=5)
 
 # ========== CLI User Interface ==========
 
