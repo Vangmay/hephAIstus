@@ -59,7 +59,7 @@
 
 4. Run HephAIstos:
    ```bash
-   python hephaistus.py
+   python main.py
    ```
 
 ## 🛠️ Available Tools
