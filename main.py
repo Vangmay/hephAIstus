@@ -1,8 +1,3 @@
-"""
-HephAIstos - Autonomous Coding Assistant
-Entry point for the application.
-"""
-
 import os
 import sys
 from dotenv import load_dotenv
@@ -24,7 +19,7 @@ def main():
         return 1
     
     try:
-        from hephaistus.ui.cli import cli
+        from hephaistos.ui.cli import cli
         cli()
     except KeyboardInterrupt:
         print("\n👋 Goodbye!")

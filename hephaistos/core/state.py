@@ -2,8 +2,8 @@ from dataclasses import dataclass, field
 from typing import  Dict, List, Optional
 import os 
 
-from hephaistus.tools.registry import ToolResult
-from hephaistus.utils.helpers import _clip
+from hephaistos.tools.registry import ToolResult
+from hephaistos.utils.helpers import _clip
 
 
 # ========== Context Matters ==========
