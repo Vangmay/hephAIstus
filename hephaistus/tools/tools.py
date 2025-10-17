@@ -2,8 +2,8 @@ import os
 import  json
 import subprocess
 from openai import OpenAI
-from hephaistos.tools.registry import Tool, ToolContext, ToolResult, ToolRegistry
-from hephaistos.utils.helpers import safe_path
+from hephaistus.tools.registry import Tool, ToolContext, ToolResult, ToolRegistry
+from hephaistus.utils.helpers import safe_path
 
 # ========== Defining the Tools ========== 
 

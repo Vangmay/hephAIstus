@@ -19,7 +19,7 @@ def main():
         return 1
     
     try:
-        from hephaistos.ui.cli import cli
+        from hephaistus.ui.cli import cli
         cli()
     except KeyboardInterrupt:
         print("\n👋 Goodbye!")

@@ -1,6 +1,6 @@
-# HephAIstos 🔥
+# HephAIstus 🔥
 
-**HephAIstos** is an autonomous coding assistant powered by ReAct (Reasoning and Acting) methodology. Named after the Greek god of fire and forge, HephAIstos helps you build, modify, and manage code projects through natural language conversations.
+**HephAIstus** is an autonomous coding assistant powered by ReAct (Reasoning and Acting) methodology. Named after the Greek god of fire and forge, HephAIstus helps you build, modify, and manage code projects through natural language conversations.
 
 ## Demo
 
@@ -47,7 +47,7 @@
    ```bash
    git clone <repository-url>
    cd
-   hephAIstos
+   hephAIstus
    ```
 
 2. Install dependencies:
@@ -58,7 +58,7 @@
 
 3. Set up your `.env` file with required API keys
 
-4. Run HephAIstos:
+4. Run HephAIstus:
    ```bash
    python main.py
    ```
@@ -117,7 +117,7 @@
 
 ## 🧠 How It Works
 
-HephAIstos uses the **ReAct (Reasoning and Acting)** framework:
+HephAIstus uses the **ReAct (Reasoning and Acting)** framework:
 
 1. **Reasoning**: The agent thinks through the problem step by step
 2. **Acting**: Takes concrete actions using available tools
@@ -176,5 +176,3 @@ This project is licensed under the MIT License - see the LICENSE file for detail
 - Built with [Groq](https://groq.com/) for fast LLM inference
 - Web search powered by [Exa](https://exa.ai/)
 - Inspired by the ReAct methodology from research papers
-
-**HephAIstos** - Forging code with the power of AI 🔥⚒️

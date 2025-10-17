@@ -1,9 +1,9 @@
 from groq import Groq
 import os
 
-from hephaistos.tools.registry import ToolRegistry, ToolResult
-from hephaistos.utils.helpers import _parse_json, _clip
-from hephaistos.core.state import AgentState
+from hephaistus.tools.registry import ToolRegistry, ToolResult
+from hephaistus.utils.helpers import _parse_json, _clip
+from hephaistus.core.state import AgentState
 
 client = Groq(
     api_key=os.environ.get("GROQ_API_KEY"),
