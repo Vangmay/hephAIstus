@@ -5,7 +5,7 @@ from dotenv import load_dotenv
 def main():
     load_dotenv()
     
-    required_vars = ["GROQ_API_KEY", "EXA_API_KEY", "OPENAI_API_KEY"]
+    required_vars = ["GROQ_API_KEY", "EXA_API_KEY"]
     
     missing_required = [var for var in required_vars if not os.getenv(var)]
     
