@@ -33,7 +33,7 @@
 
 ### Prerequisites
 
-1. **Python 3.8+**
+1. **Python 3.14**
 2. **API Keys** (set in `.env` file):
    ```env
    GROQ_API_KEY=your_groq_api_key
