@@ -4,6 +4,7 @@ import subprocess
 from openai import OpenAI
 from hephaistus.tools.registry import Tool, ToolContext, ToolResult, ToolRegistry
 from hephaistus.utils.helpers import safe_path
+from hephaistus.tools.currency_converter import convert_currency
 
 # ========== Defining the Tools ========== 
 
@@ -163,7 +164,7 @@ def _tool_git_add(args: dict, context: ToolContext) -> ToolResult:
         
         for file in files:
             result = subprocess.run(['git', 'add', file], 
-                                   cwd=context.workspace_path, capture_output=True, text=True)
+                                   cwd=context.workspace_.workspace_path, capture_output=True, text=True)
             if result.returncode != 0:
                 return ToolResult(ok=False, output=f"Error adding {file}: {result.stderr}")
         
@@ -199,7 +200,24 @@ def _tool_git_push(args: dict, context: ToolContext) -> ToolResult:
         return ToolResult(ok=True, output=f"Pushed successfully to {remote}/{branch}")
     except Exception as e:
         return ToolResult(ok=False, output=f"Error pushing: {e}")
-    
+
+def _tool_convert_currency(args: dict, context: ToolContext) -> ToolResult:
+    amount = args.get("amount")
+    from_currency = args.get("from_currency")
+    to_currency = args.get("to_currency")
+
+    if not amount or not from_currency or not to_currency:
+        return ToolResult(ok=False, output="Amount, from_currency, and to_currency are required.")
+
+    try:
+        converted_amount = convert_currency(float(amount), from_currency, to_currency)
+        if converted_amount is not None:
+            return ToolResult(ok=True, output=str(converted_amount))
+        else:
+            return ToolResult(ok=False, output="Failed to convert currency.")
+    except Exception as e:
+        return ToolResult(ok=False, output=f"Error converting currency: {e}")
+
 # ========== Registering Tools ==========
 tool_dict = {
     "chat": Tool(
@@ -266,6 +284,11 @@ tool_dict = {
         name="git_push",
         description="Push committed changes to remote git repository.",
         fn=_tool_git_push
+    ),
+    "convert_currency": Tool(
+        name="convert_currency",
+        description="Converts a given amount from one currency to another using real-time exchange rates.",
+        fn=_tool_convert_currency
     ),
 }
 
